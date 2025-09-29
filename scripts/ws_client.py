@@ -22,6 +22,7 @@ class AsrChunk:
     text: str
     is_final: bool = True
     timestamp_ms: int | None = None
+    session_id: str | None = None
 
     def to_payload(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -31,18 +32,30 @@ class AsrChunk:
         }
         if self.timestamp_ms is not None:
             payload["timestamp"] = self.timestamp_ms
+        if self.session_id is not None:
+            payload["session_id"] = self.session_id
         return payload
 
 
 async def _send_sequence(ws: websockets.WebSocketClientProtocol, chunks: Iterable[AsrChunk]) -> None:
     """Send ASR chunks with small pauses to emulate streaming input."""
 
+    # 从第一个chunk中获取session_id，如果没有则使用None
+    session_id = None
+    for chunk in chunks:
+        if chunk.session_id is not None:
+            session_id = chunk.session_id
+            break
+
     for chunk in chunks:
         await ws.send(json.dumps(chunk.to_payload(), ensure_ascii=False))
         await asyncio.sleep(0.1)
 
     # Gracefully stop the session so the server can clean up state.
-    await ws.send(json.dumps({"type": "control", "action": "stop"}))
+    stop_payload = {"type": "control", "action": "stop"}
+    if session_id is not None:
+        stop_payload["session_id"] = session_id
+    await ws.send(json.dumps(stop_payload))
 
 
 async def _reader(ws: websockets.WebSocketClientProtocol) -> None:
@@ -60,10 +73,13 @@ async def _reader(ws: websockets.WebSocketClientProtocol) -> None:
 def _build_default_sequence() -> List[AsrChunk]:
     """Create a short scenario that should trigger a mock RAG answer."""
 
+    # 使用固定的session_id用于测试
+    test_session_id = "test-session-12345"
+    
     return [
-        AsrChunk(text="大家好，今天我们复盘一下发布进展。"),
-        AsrChunk(text="目前后台服务已经部署完成。"),
-        AsrChunk(text="请问接下来要怎么安排推送上线？"),
+        AsrChunk(text="大家好，今天我们复盘一下发布进展。", session_id=test_session_id),
+        AsrChunk(text="目前后台服务已经部署完成。", session_id=test_session_id),
+        AsrChunk(text="请问接下来要怎么安排推送上线？", session_id=test_session_id),
     ]
 
 

@@ -75,7 +75,9 @@ def stream_answer(answer: str, max_chunk_size: int = 120) -> List[str]:
 @app.websocket("/ws/realtime-asr")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
-    session = SessionState(session_id=str(uuid4()))
+    # 初始会话ID，如果客户端提供了session_id则使用客户端的
+    initial_session_id = str(uuid4())
+    session = SessionState(session_id=initial_session_id)
     await websocket.send_json({"type": "ack", "message": "connected", "session_id": session.session_id})
     await websocket.send_json({"type": "status", "stage": "listening"})
 
@@ -101,6 +103,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 })
                 continue
 
+            # 检查客户端是否提供了session_id
+            client_session_id = payload.get("session_id")
+            if isinstance(client_session_id, str) and client_session_id != session.session_id:
+                # 如果客户端提供了不同的session_id，更新会话
+                session = SessionState(session_id=client_session_id)
+            
             await websocket.send_json({
                 "type": "ack",
                 "received_type": msg_type,
