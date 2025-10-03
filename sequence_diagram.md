@@ -44,7 +44,7 @@ sequenceDiagram
     RAG-->>WS: 返回模拟答案
     WS->>WS: 将答案分块处理
     WS->>Client: 发送答案块1 {"type": "answer", "stream_index": 0, "content": "这是一个模拟回答，用于展示系统流程。", "final": false}
-    WS->>Client: 发送答案块2 {"type": "answer", "stream_index": 1, "content": "根据你的问题"请问接下来要怎么安排推送上线？"，建议稍后接入真正的 RAG 服务。", "final": true}
+    WS->>Client: 发送答案块2 {"type": "answer", "stream_index": 1, "content": "根据你的问题\"请问接下来要怎么安排推送上线？\"，建议稍后接入真正的 RAG 服务。", "final": true}
     WS->>Client: 发送状态 {"type": "status", "stage": "idle"}
     WS->>Session: 重置会话状态
 

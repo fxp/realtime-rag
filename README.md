@@ -34,7 +34,13 @@ cp env.example .env
 
 ```bash
 # 开发模式（支持热加载）
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+USE_MOCK_RAG=1 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+健康检查：
+
+```bash
+curl -s http://localhost:8000/healthz
+```
 
 # 或者使用 Python 直接运行
 python -m app.main
@@ -159,6 +165,12 @@ python scripts/dify_workflow_client.py \
 ```bash
 # 确保服务端已启动
 python scripts/ws_client.py
+
+### 运行协议单元与集成测试
+
+```bash
+pytest -q
+```
 ```
 
 ### 运行 Dify API 测试
@@ -197,7 +209,7 @@ python scripts/ws_client.py
 
 ```bash
 docker build -t realtime-rag .
-docker run -e DIFY_API_KEY="your-key" -p 8000:8000 realtime-rag
+docker run -e DIFY_API_KEY="your-key" -e USE_MOCK_RAG=0 -p 8000:8000 realtime-rag
 ```
 
 ### Nginx 反向代理

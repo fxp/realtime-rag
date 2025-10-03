@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -11,6 +12,7 @@ from uuid import uuid4
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
 # 加载 .env 文件
 env_path = Path(__file__).parent.parent / ".env"
@@ -23,12 +25,23 @@ DIFY_API_KEY = os.getenv("DIFY_API_KEY", "")
 DIFY_BASE_URL = os.getenv("DIFY_BASE_URL", "https://api.dify.ai/v1")
 DIFY_TIMEOUT = float(os.getenv("DIFY_TIMEOUT", "60.0"))
 
+# 运行模式与日志
+USE_MOCK_RAG = os.getenv("USE_MOCK_RAG")
+if USE_MOCK_RAG is None:
+    # 如果未设置，则当没有 API KEY 时自动启用模拟模式
+    USE_MOCK_RAG = "1" if not DIFY_API_KEY else "0"
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("realtime-rag")
+
 # 启动时显示配置信息
 if DIFY_API_KEY:
-    print(f"✓ Dify API 已配置: {DIFY_API_KEY[:10]}...")
-    print(f"✓ Base URL: {DIFY_BASE_URL}")
+    logger.info("Dify API 已配置: %s...", DIFY_API_KEY[:10])
+    logger.info("Base URL: %s", DIFY_BASE_URL)
 else:
-    print("⚠️  警告: DIFY_API_KEY 未配置，RAG 功能将无法使用")
+    logger.warning("DIFY_API_KEY 未配置，将使用模拟 RAG（可设置 USE_MOCK_RAG=0 强制调用真实 API）")
+logger.info("USE_MOCK_RAG=%s", USE_MOCK_RAG)
 
 
 class SessionState:
@@ -114,17 +127,17 @@ async def run_dify_rag(
     
     except httpx.HTTPStatusError as e:
         error_msg = f"Dify API HTTP 错误 {e.response.status_code}: {e.response.text}"
-        print(f"[Dify RAG Error] {error_msg}")
+        logger.error("[Dify RAG Error] %s", error_msg)
         return f"调用 RAG 服务失败：{error_msg}"
     
     except httpx.RequestError as e:
         error_msg = f"请求错误: {str(e)}"
-        print(f"[Dify RAG Error] {error_msg}")
+        logger.error("[Dify RAG Error] %s", error_msg)
         return f"调用 RAG 服务失败：{error_msg}"
     
     except Exception as e:
         error_msg = f"未知错误: {str(e)}"
-        print(f"[Dify RAG Error] {error_msg}")
+        logger.error("[Dify RAG Error] %s", error_msg)
         return f"调用 RAG 服务失败：{error_msg}"
 
 
@@ -158,13 +171,40 @@ def stream_answer(answer: str, max_chunk_size: int = 120) -> List[str]:
     return chunks
 
 
+async def get_answer(query: str, session_id: str) -> str:
+    """Select real or mock RAG backend based on configuration."""
+    if str(USE_MOCK_RAG) == "1":
+        return await run_mock_rag(query)
+    return await run_dify_rag(
+        query=query,
+        user=f"ws-user-{session_id}",
+        conversation_id=None,
+    )
+
+
+@app.get("/healthz")
+async def healthz() -> JSONResponse:
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/")
+async def root() -> JSONResponse:
+    return JSONResponse({
+        "name": "Realtime RAG Prototype",
+        "websocket": "/ws/realtime-asr",
+        "docs": "/docs",
+        "health": "/healthz",
+    })
+
+
 @app.websocket("/ws/realtime-asr")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
     # 初始会话ID，如果客户端提供了session_id则使用客户端的
     initial_session_id = str(uuid4())
     session = SessionState(session_id=initial_session_id)
-    await websocket.send_json({"type": "ack", "message": "connected", "session_id": session.session_id})
+    # 按照协议：连接确认只包含 type+session_id
+    await websocket.send_json({"type": "ack", "session_id": session.session_id})
     await websocket.send_json({"type": "status", "stage": "listening"})
 
     try:
@@ -214,7 +254,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     await websocket.send_json({"type": "status", "stage": "listening"})
                 elif action == "stop":
                     await websocket.send_json({"type": "status", "stage": "closed"})
-                    break
+                    try:
+                        await websocket.close(code=1000)
+                    finally:
+                        break
                 else:
                     await websocket.send_json({
                         "type": "error",
@@ -273,13 +316,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             await websocket.send_json({"type": "status", "stage": "analyzing", "question": question})
             await websocket.send_json({"type": "status", "stage": "querying_rag"})
 
-            # 使用真实的 Dify RAG 调用
-            # 如果需要使用模拟调用，可以切换为 run_mock_rag(question)
-            answer = await run_dify_rag(
-                query=question,
-                user=f"ws-user-{session.session_id}",
-                conversation_id=None,  # 可以传入 session.session_id 来支持多轮对话
-            )
+            # 根据配置选择真实或模拟 RAG
+            answer = await get_answer(question, session.session_id)
             chunks = stream_answer(answer)
             for idx, chunk in enumerate(chunks):
                 await websocket.send_json({
