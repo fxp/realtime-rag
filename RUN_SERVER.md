@@ -37,10 +37,10 @@ export DIFY_TIMEOUT="60.0"  # 可选
 python -m app.main
 
 # 方法 2: 使用 uvicorn（推荐，支持热加载）
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+USE_MOCK_RAG=1 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 # 方法 3: 生产环境（多进程）
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+USE_MOCK_RAG=0 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 服务将在 `http://localhost:8000` 启动。
@@ -51,6 +51,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 ```bash
 python scripts/ws_client.py
+
+### 5. 健康检查
+
+```bash
+curl -s http://localhost:8000/healthz
+```
 ```
 
 ## 📡 WebSocket 端点
