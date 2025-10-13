@@ -28,17 +28,18 @@ Clients should echo the most recent `session_id` received from the server. The s
 
 ## Client → Server Messages
 
-| Type          | Description                                                   | Required Fields                                        |
-| ------------- | ------------------------------------------------------------- | ------------------------------------------------------ |
-| `keepalive`   | Optional heartbeat payload.                                   | —                                                      |
-| `control`     | Adjusts the session lifecycle.                                | `action`: one of `pause`, `resume`, `stop`.            |
-| `asr_chunk`   | Sends incremental ASR output.                                 | `text`: string, `is_final`: boolean.                   |
+| Type        | Description                                   | Required Fields                                           |
+| ----------- | --------------------------------------------- | --------------------------------------------------------- |
+| `keepalive` | Optional heartbeat payload.                   | —                                                         |
+| `control`   | Adjusts the session lifecycle.                | `action`: one of `pause`, `resume`, `stop`, `instant_query`. |
+| `asr_chunk` | Sends incremental ASR output.                 | `text`: string, `is_final`: boolean.                      |
 
 ### `control`
 
 - `pause`: server transitions into `paused` stage and ignores further `asr_chunk` payloads until resumed.
 - `resume`: server re-enters the `listening` stage.
 - `stop`: server emits a `status` message with stage `closed` and then terminates the session loop.
+- `instant_query`: immediately interrupts any ongoing RAG response and forces the backend to use the latest finalized ASR chunk.
 
 ### `asr_chunk`
 
@@ -50,7 +51,7 @@ Clients should echo the most recent `session_id` received from the server. The s
 | Type        | Description                                                                 | Key Fields                                                                                           |
 | ----------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `ack`       | Confirms receipt of a message or initial connection.                        | `message` (on connect) or `received_type`, `session_id`.                                             |
-| `status`    | Communicates the state machine stage.                                       | `stage`: `listening`, `paused`, `waiting_for_question`, `analyzing`, `querying_rag`, `idle`, `closed`; optional `note`, `question`. |
+| `status`    | Communicates the state machine stage.                                       | `stage`: `listening`, `paused`, `waiting_for_question`, `analyzing`, `instant_query`, `querying_rag`, `interrupting`, `idle`, `closed`; optional `note`, `question`, `mode`. |
 | `answer`    | Streams generated answers back to the client.                               | `stream_index`: integer, `content`: string chunk, `final`: boolean.                                  |
 | `error`     | Signals malformed inputs or operational failures.                           | `code`: string, `message`: human-readable description, optional diagnostic fields.                   |
 
@@ -63,12 +64,25 @@ Clients should echo the most recent `session_id` received from the server. The s
 5. Answer text is chunked using `stream_answer` and returned as ordered `answer` messages.
 6. A concluding `status` stage `idle` indicates readiness for further input.
 
+## Instant Query Control Flow
+
+When a client emits `{"type": "control", "action": "instant_query"}` after at least one finalized ASR chunk has been delivered, the server performs a forced lookup:
+
+1. If a RAG query is already in-flight, the server sends `status` stage `interrupting` and cancels the pending task.
+2. Without running `SessionState.looks_like_question()`, the server emits `status` stage `instant_query` that echoes the last finalized ASR chunk and then `status` stage `querying_rag` with `mode: "instant"`.
+3. Answer chunks stream through `answer` messages as usual.
+4. Completion is acknowledged by `status` stage `idle`.
+
+If no finalized ASR chunk is available, the server responds with an `error` message using code `NO_FINAL_ASR`.
+
 ## Error Conditions
 
 - **Invalid JSON**: The server responds with `error` code `INVALID_JSON` and ignores the payload.
 - **Missing or Invalid Fields**: `error` code `INVALID_MESSAGE` for absent `type`, `text`, or improper types.
 - **Unsupported Type**: `error` code `UNSUPPORTED_TYPE` when the `type` is not recognised.
 - **Unknown Control Action**: `error` code `UNKNOWN_ACTION` when `action` is outside the supported set.
+- **No Finalized ASR**: `error` code `NO_FINAL_ASR` when `instant_query` is issued before any final ASR chunk is stored.
+- **Empty Question Payload**: `error` code `EMPTY_QUESTION` when the final ASR chunk resolves to an empty string.
 - **Backend Failures**: When the Dify API fails, the server returns an `answer` containing a descriptive error string followed by `status` stage `idle`.
 
 ## Session Management
@@ -98,6 +112,10 @@ flowchart TD
     input_choice -->|control:pause| status_paused[Server status:paused]
     status_paused -->|control:resume| listen_status
     input_choice -->|control:stop| status_closed[Server status:closed then closes socket]
+    input_choice -->|control:instant_query| interrupting[Server status:interrupting]
+    interrupting --> instant_status[Server status:instant_query]
+    instant_status --> instant_querying[Server status:querying_rag (mode: instant)]
+    instant_querying --> rag_call
     input_choice -->|asr_chunk (is_final=false)| buffer_partial[Server buffers interim text]
     input_choice -->|asr_chunk (is_final=true)| check_question{Looks like question?}
     check_question -->|No| status_wait[Server status:waiting_for_question]
