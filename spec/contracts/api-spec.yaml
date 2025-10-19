@@ -1,0 +1,358 @@
+openapi: 3.0.3
+info:
+  title: Realtime RAG WebSocket Service API
+  description: |
+    基于 WebSocket 的实时检索增强生成（RAG）服务，支持多种 RAG 和搜索服务提供商。
+    
+    ## 特性
+    - WebSocket 实时通信
+    - 多种 RAG 服务提供商支持
+    - 智能问题检测
+    - 流式答案传输
+    - 会话状态管理
+    
+    ## 服务提供商
+    - **RAG 提供商**: Dify, 自定义 RAG 服务
+    - **搜索提供商**: Serper, Google Search, 自定义搜索服务
+  version: 2.0.0
+  contact:
+    name: Realtime RAG Team
+    email: support@realtime-rag.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8000
+    description: 开发环境
+  - url: https://api.realtime-rag.com
+    description: 生产环境
+
+paths:
+  /health:
+    get:
+      summary: 健康检查
+      description: 检查服务状态和配置的服务提供商
+      operationId: healthCheck
+      tags:
+        - System
+      responses:
+        '200':
+          description: 服务健康
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              examples:
+                healthy:
+                  summary: 服务健康
+                  value:
+                    status: "healthy"
+                    version: "2.0.0"
+                    services:
+                      rag: true
+                      search: true
+                    providers:
+                      rag:
+                        name: "DifyProvider"
+                        type: "RAG"
+                      search:
+                        name: "SerperProvider"
+                        type: "Search"
+        '500':
+          description: 服务异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /ws/realtime-asr:
+    get:
+      summary: WebSocket 连接
+      description: |
+        建立 WebSocket 连接进行实时 ASR 文本处理和 RAG 查询。
+        
+        ## 连接流程
+        1. 客户端连接到 WebSocket 端点
+        2. 服务器发送连接确认消息
+        3. 客户端发送 ASR 文本块或控制消息
+        4. 服务器返回状态更新和答案
+        
+        ## 消息格式
+        所有消息都使用 JSON 格式，包含 `type` 字段标识消息类型。
+      operationId: websocketConnect
+      tags:
+        - WebSocket
+      parameters:
+        - name: session_id
+          in: query
+          description: 可选的会话标识符
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '101':
+          description: WebSocket 连接成功建立
+          headers:
+            Upgrade:
+              schema:
+                type: string
+                enum: [websocket]
+            Connection:
+              schema:
+                type: string
+                enum: [Upgrade]
+        '400':
+          description: 连接失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - version
+        - services
+        - providers
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+          description: 服务总体状态
+        version:
+          type: string
+          description: 应用版本号
+          example: "2.0.0"
+        services:
+          type: object
+          description: 服务状态
+          properties:
+            rag:
+              type: boolean
+              description: RAG 服务状态
+            search:
+              type: boolean
+              description: 搜索服务状态
+        providers:
+          type: object
+          description: 提供商信息
+          properties:
+            rag:
+              $ref: '#/components/schemas/ProviderInfo'
+            search:
+              $ref: '#/components/schemas/ProviderInfo'
+
+    ProviderInfo:
+      type: object
+      required:
+        - name
+        - type
+      properties:
+        name:
+          type: string
+          description: 提供商名称
+          example: "DifyProvider"
+        type:
+          type: string
+          enum: [RAG, Search]
+          description: 提供商类型
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: 错误代码
+        message:
+          type: string
+          description: 错误描述
+        details:
+          type: object
+          description: 错误详情
+
+    # WebSocket 消息模式
+    WebSocketMessage:
+      type: object
+      required:
+        - type
+        - session_id
+      properties:
+        type:
+          type: string
+          description: 消息类型
+        session_id:
+          type: string
+          format: uuid
+          description: 会话标识符
+
+    # 客户端消息
+    ASRChunkMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [asr_chunk]
+            text:
+              type: string
+              description: ASR 识别的文本
+              maxLength: 10000
+            is_final:
+              type: boolean
+              description: 是否为最终识别结果
+            timestamp:
+              type: integer
+              format: int64
+              description: 时间戳（毫秒）
+
+    ControlMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [control]
+            action:
+              type: string
+              enum: [pause, resume, stop, instant_query]
+              description: 控制动作
+
+    KeepAliveMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [keepalive]
+
+    # 服务器消息
+    AckMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [ack]
+            message:
+              type: string
+              description: 确认消息
+            received_type:
+              type: string
+              description: 接收到的消息类型
+
+    StatusMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [status]
+            stage:
+              type: string
+              enum: 
+                - listening
+                - paused
+                - waiting_for_question
+                - analyzing
+                - instant_query
+                - querying_rag
+                - interrupting
+                - idle
+                - closed
+              description: 当前处理阶段
+            note:
+              type: string
+              description: 备注信息
+            question:
+              type: string
+              description: 当前问题
+            mode:
+              type: string
+              enum: [standard, instant]
+              description: 查询模式
+
+    AnswerMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [answer]
+            stream_index:
+              type: integer
+              description: 流索引
+            content:
+              type: string
+              description: 答案内容块
+            final:
+              type: boolean
+              description: 是否为最后一个块
+
+    ErrorMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [error]
+            code:
+              type: string
+              enum:
+                - INVALID_JSON
+                - INVALID_MESSAGE
+                - UNSUPPORTED_TYPE
+                - UNKNOWN_ACTION
+                - NO_FINAL_ASR
+                - EMPTY_QUESTION
+                - SERVER_ERROR
+                - SERVICE_UNAVAILABLE
+                - RAG_ERROR
+              description: 错误代码
+            message:
+              type: string
+              description: 错误描述
+            details:
+              type: object
+              description: 错误详情
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API 密钥认证
+
+    WebSocketAuth:
+      type: apiKey
+      in: query
+      name: token
+      description: WebSocket 连接令牌
+
+security:
+  - ApiKeyAuth: []
+  - WebSocketAuth: []
+
+tags:
+  - name: System
+    description: 系统管理和健康检查
+  - name: WebSocket
+    description: WebSocket 实时通信
+
+externalDocs:
+  description: 更多文档
+  url: https://docs.realtime-rag.com

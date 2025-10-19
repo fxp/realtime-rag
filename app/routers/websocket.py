@@ -10,7 +10,7 @@ from uuid import uuid4
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.models.session import SessionState
-from app.services.dify_client import DifyClient
+from app.services.rag_service import get_rag_service
 from app.services.text_utils import stream_answer
 
 router = APIRouter()
@@ -173,7 +173,27 @@ async def perform_query(session: SessionState, websocket: WebSocket, lock: async
             querying_payload["mode"] = "instant"
         await send_json_locked(websocket, lock, querying_payload)
 
-        answer = await DifyClient.query(text=question, user=f"ws-user-{session.session_id}")
+        # 使用 RAG 服务查询
+        rag_service = get_rag_service()
+        if not rag_service:
+            await send_json_locked(websocket, lock, {"type": "error", "code": "SERVICE_UNAVAILABLE", "message": "RAG 服务未初始化"})
+            return
+        
+        try:
+            # 检测是否应该使用搜索服务（简单启发式：包含"搜索"、"查找"等关键词）
+            use_search = any(keyword in question.lower() for keyword in ["搜索", "查找", "找", "search", "find", "lookup"])
+            
+            result = await rag_service.query(
+                text=question,
+                user=f"ws-user-{session.session_id}",
+                use_search=use_search
+            )
+            
+            answer = result.content
+        except Exception as e:
+            await send_json_locked(websocket, lock, {"type": "error", "code": "RAG_ERROR", "message": str(e)})
+            return
+        
         chunks = stream_answer(answer)
         for idx, chunk in enumerate(chunks):
             await send_json_locked(
