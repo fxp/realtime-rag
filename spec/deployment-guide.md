@@ -62,10 +62,10 @@ vim .env
 
 **必需配置**:
 ```bash
-# Dify API 配置
-DIFY_API_KEY=app-your-api-key-here
-DIFY_BASE_URL=https://api.dify.ai/v1
-DIFY_TIMEOUT=60.0
+# Context Provider API 配置
+CONTEXT_API_KEY=app-your-api-key-here
+CONTEXT_BASE_URL=https://api.context.ai/v1
+CONTEXT_TIMEOUT=60.0
 ```
 
 ### 5. 启动服务
@@ -149,9 +149,9 @@ mkdir -p /home/realtime-rag/data
 
 ```bash
 # /home/realtime-rag/config/.env
-DIFY_API_KEY=app-your-production-api-key
-DIFY_BASE_URL=https://api.dify.ai/v1
-DIFY_TIMEOUT=60.0
+CONTEXT_API_KEY=app-your-production-api-key
+CONTEXT_BASE_URL=https://api.context.ai/v1
+CONTEXT_TIMEOUT=60.0
 
 # 应用配置
 APP_TITLE=Realtime RAG Production
@@ -348,9 +348,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DIFY_API_KEY=${DIFY_API_KEY}
-      - DIFY_BASE_URL=${DIFY_BASE_URL:-https://api.dify.ai/v1}
-      - DIFY_TIMEOUT=${DIFY_TIMEOUT:-60.0}
+      - CONTEXT_API_KEY=${CONTEXT_API_KEY}
+      - CONTEXT_BASE_URL=${CONTEXT_BASE_URL:-https://api.context.ai/v1}
+      - CONTEXT_TIMEOUT=${CONTEXT_TIMEOUT:-60.0}
     volumes:
       - ./logs:/app/logs
     restart: unless-stopped
@@ -417,13 +417,13 @@ spec:
         ports:
         - containerPort: 8000
         env:
-        - name: DIFY_API_KEY
+        - name: CONTEXT_API_KEY
           valueFrom:
             secretKeyRef:
               name: realtime-rag-secrets
-              key: dify-api-key
-        - name: DIFY_BASE_URL
-          value: "https://api.dify.ai/v1"
+              key: context-api-key
+        - name: CONTEXT_BASE_URL
+          value: "https://api.context.ai/v1"
         resources:
           requests:
             memory: "512Mi"
@@ -472,8 +472,8 @@ kind: ConfigMap
 metadata:
   name: realtime-rag-config
 data:
-  DIFY_BASE_URL: "https://api.dify.ai/v1"
-  DIFY_TIMEOUT: "60.0"
+  CONTEXT_BASE_URL: "https://api.context.ai/v1"
+  CONTEXT_TIMEOUT: "60.0"
 
 ---
 apiVersion: v1
@@ -482,7 +482,7 @@ metadata:
   name: realtime-rag-secrets
 type: Opaque
 data:
-  dify-api-key: <base64-encoded-api-key>
+  context-api-key: <base64-encoded-api-key>
 ```
 
 ### 4. 部署到 Kubernetes
@@ -609,24 +609,24 @@ import asyncio
 import httpx
 from app.config import config
 
-async def check_dify_connectivity():
-    """检查 Dify API 连接性"""
+async def check_context_connectivity():
+    """检查 Context Provider API 连接性"""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{config.DIFY_BASE_URL}/health")
+            response = await client.get(f"{config.CONTEXT_BASE_URL}/health")
             return response.status_code == 200
     except Exception:
         return False
 
 async def health_check():
     """综合健康检查"""
-    dify_ok = await check_dify_connectivity()
+    context_ok = await check_context_connectivity()
     
     return {
-        "status": "healthy" if dify_ok else "degraded",
+        "status": "healthy" if context_ok else "degraded",
         "version": config.APP_VERSION,
-        "dify_configured": bool(config.DIFY_API_KEY),
-        "dify_accessible": dify_ok,
+        "context_configured": bool(config.CONTEXT_API_KEY),
+        "context_accessible": context_ok,
         "timestamp": datetime.utcnow().isoformat()
     }
 ```
@@ -680,10 +680,10 @@ sudo journalctl -u realtime-rag -f
 #### API 问题
 
 ```bash
-# 测试 Dify API 连接
-curl -H "Authorization: Bearer $DIFY_API_KEY" \
+# 测试 Context Provider API 连接
+curl -H "Authorization: Bearer $CONTEXT_API_KEY" \
      -H "Content-Type: application/json" \
-     "$DIFY_BASE_URL/chat-messages" \
+     "$CONTEXT_BASE_URL/chat-messages" \
      -d '{"query": "test", "user": "test-user", "response_mode": "blocking"}'
 ```
 

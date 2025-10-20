@@ -53,6 +53,7 @@
 | `ack`       | 确认收到消息或初始连接                        | `message` (连接时) 或 `received_type`, `session_id`                                             |
 | `status`    | 通信状态机阶段                                       | `stage`: `listening`, `paused`, `waiting_for_question`, `analyzing`, `instant_query`, `querying_rag`, `interrupting`, `idle`, `closed`; 可选 `note`, `question`, `mode` |
 | `answer`    | 将生成的答案流式传输回客户端                               | `stream_index`: 整数, `content`: 字符串块, `final`: 布尔值                                  |
+| `batch_progress` | 批量处理任务进度更新                           | `task_id`: 字符串, `progress`: 数字, `status`: 字符串, `message`: 字符串                    |
 | `error`     | 表示格式错误的输入或操作失败                           | `code`: 字符串, `message`: 人类可读的描述, 可选诊断字段                   |
 
 ## 问题检测流程
@@ -60,7 +61,7 @@
 1. 客户端发送 `asr_chunk` 消息，直到带有 `is_final: true` 的消息到达
 2. 服务器聚合所有最终化的文本块，通过 `SessionState.looks_like_question()` 应用启发式算法
 3. 如果聚合文本不被认为是问题，服务器回复 `status` 阶段 `waiting_for_question`
-4. 如果被识别为问题，服务器发送 `status` 阶段 `analyzing` 和 `querying_rag` 并将文本转发给 Dify API
+4. 如果被识别为问题，服务器发送 `status` 阶段 `analyzing` 和 `querying_rag` 并将文本转发给 Context Provider API
 5. 答案文本使用 `stream_answer` 分块，作为有序的 `answer` 消息返回
 6. 结束的 `status` 阶段 `idle` 表示准备接收进一步输入
 
@@ -75,6 +76,51 @@
 
 如果没有可用的最终化 ASR 文本块，服务器使用代码 `NO_FINAL_ASR` 回复 `error` 消息。
 
+## 批量处理进度通知
+
+当批量处理任务状态发生变化时，服务器会通过 WebSocket 发送 `batch_progress` 消息：
+
+### `batch_progress` 消息格式
+
+```json
+{
+  "type": "batch_progress",
+  "task_id": "uuid-string",
+  "progress": 45.5,
+  "status": "running",
+  "message": "正在处理第 45 个文本...",
+  "timestamp": "2024-01-01T12:00:00Z"
+}
+```
+
+### 进度更新触发条件
+
+1. **任务开始**: `status: "running"`, `progress: 0`
+2. **进度更新**: `status: "running"`, `progress: 0-100`
+3. **任务完成**: `status: "completed"`, `progress: 100`
+4. **任务失败**: `status: "failed"`, `progress: 当前值`
+5. **任务取消**: `status: "cancelled"`, `progress: 当前值`
+
+### 客户端处理建议
+
+```javascript
+// 客户端处理批量处理进度更新
+websocket.onmessage = function(event) {
+    const message = JSON.parse(event.data);
+    
+    if (message.type === 'batch_progress') {
+        updateProgressBar(message.progress);
+        updateStatusText(message.message);
+        
+        if (message.status === 'completed') {
+            showCompletionMessage();
+        } else if (message.status === 'failed') {
+            showErrorMessage(message.message);
+        }
+    }
+};
+```
+
 ## 错误条件
 
 - **无效 JSON**: 服务器回复 `error` 代码 `INVALID_JSON` 并忽略载荷
@@ -83,7 +129,7 @@
 - **未知控制操作**: 当 `action` 超出支持集合时，回复 `error` 代码 `UNKNOWN_ACTION`
 - **无最终化 ASR**: 当在任何最终 ASR 文本块存储之前发出 `instant_query` 时，回复 `error` 代码 `NO_FINAL_ASR`
 - **空问题载荷**: 当最终 ASR 文本块解析为空字符串时，回复 `error` 代码 `EMPTY_QUESTION`
-- **后端失败**: 当 Dify API 失败时，服务器返回包含描述性错误字符串的 `answer`，后跟 `status` 阶段 `idle`
+- **后端失败**: 当 Context Provider API 失败时，服务器返回包含描述性错误字符串的 `answer`，后跟 `status` 阶段 `idle`
 
 ## 会话管理
 
@@ -98,7 +144,7 @@
 
 ## 安全考虑
 
-- Dify 访问的密钥通过环境变量注入，绝不通过 WebSocket 传输
+- Context Provider 访问的密钥通过环境变量注入，绝不通过 WebSocket 传输
 - 消费者应该在 TLS 终止后面运行服务以保护 ASR 内容
 
 ## Flow Diagram

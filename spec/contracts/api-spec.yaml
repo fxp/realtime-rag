@@ -12,7 +12,7 @@ info:
     - 会话状态管理
     
     ## 服务提供商
-    - **RAG 提供商**: Dify, 自定义 RAG 服务
+    - **RAG 提供商**: Context Provider, 自定义 RAG 服务
     - **搜索提供商**: Serper, Google Search, 自定义搜索服务
   version: 2.0.0
   contact:
@@ -54,7 +54,7 @@ paths:
                       search: true
                     providers:
                       rag:
-                        name: "DifyProvider"
+                        name: "ContextProvider"
                         type: "RAG"
                       search:
                         name: "SerperProvider"
@@ -110,6 +110,129 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/batch/tasks:
+    post:
+      summary: 提交批量处理任务
+      description: 提交一个批量处理任务，系统将异步处理文本列表
+      operationId: submitBatchTask
+      tags:
+        - Batch Processing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchTaskRequest'
+      responses:
+        '201':
+          description: 任务提交成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchTaskResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/batch/tasks/{task_id}:
+    get:
+      summary: 获取任务状态
+      description: 获取指定批量处理任务的状态信息
+      operationId: getBatchTaskStatus
+      tags:
+        - Batch Processing
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 任务状态信息
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchTaskStatus'
+        '404':
+          description: 任务不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: 取消任务
+      description: 取消指定的批量处理任务
+      operationId: cancelBatchTask
+      tags:
+        - Batch Processing
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 任务取消成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Task cancelled successfully"
+        '404':
+          description: 任务不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/batch/tasks/{task_id}/results:
+    get:
+      summary: 获取任务结果
+      description: 获取指定批量处理任务的处理结果
+      operationId: getBatchTaskResults
+      tags:
+        - Batch Processing
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: size
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: 任务结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchTaskResults'
+        '404':
+          description: 任务不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   schemas:
     HealthResponse:
@@ -156,7 +279,7 @@ components:
         name:
           type: string
           description: 提供商名称
-          example: "DifyProvider"
+          example: "ContextProvider"
         type:
           type: string
           enum: [RAG, Search]
@@ -330,6 +453,146 @@ components:
               type: object
               description: 错误详情
 
+    # 批量处理相关模式
+    BatchTaskRequest:
+      type: object
+      required:
+        - name
+        - texts
+      properties:
+        name:
+          type: string
+          description: 任务名称
+          example: "批量处理任务"
+        texts:
+          type: array
+          items:
+            type: string
+          description: 待处理的文本列表
+          minItems: 1
+          maxItems: 10000
+        options:
+          type: object
+          description: 处理选项
+          properties:
+            provider:
+              type: string
+              enum: [context, openai, custom]
+              description: RAG提供商
+            timeout:
+              type: number
+              description: 超时时间（秒）
+            max_tokens:
+              type: integer
+              description: 最大token数
+            temperature:
+              type: number
+              description: 温度参数
+
+    BatchTaskResponse:
+      type: object
+      required:
+        - task_id
+        - status
+      properties:
+        task_id:
+          type: string
+          format: uuid
+          description: 任务ID
+        status:
+          type: string
+          enum: [pending, running, completed, failed, cancelled]
+          description: 任务状态
+        created_at:
+          type: string
+          format: date-time
+          description: 创建时间
+
+    BatchTaskStatus:
+      type: object
+      required:
+        - task_id
+        - status
+        - progress
+      properties:
+        task_id:
+          type: string
+          format: uuid
+          description: 任务ID
+        name:
+          type: string
+          description: 任务名称
+        status:
+          type: string
+          enum: [pending, running, completed, failed, cancelled]
+          description: 任务状态
+        progress:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: 进度百分比
+        created_at:
+          type: string
+          format: date-time
+          description: 创建时间
+        started_at:
+          type: string
+          format: date-time
+          description: 开始时间
+        completed_at:
+          type: string
+          format: date-time
+          description: 完成时间
+        error_message:
+          type: string
+          description: 错误信息
+
+    BatchTaskResults:
+      type: object
+      required:
+        - task_id
+        - results
+        - total
+      properties:
+        task_id:
+          type: string
+          format: uuid
+          description: 任务ID
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueryResult'
+          description: 处理结果列表
+        total:
+          type: integer
+          description: 结果总数
+        page:
+          type: integer
+          description: 当前页码
+        size:
+          type: integer
+          description: 每页大小
+
+    QueryResult:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          description: 回答内容
+        metadata:
+          type: object
+          description: 元数据
+        sources:
+          type: array
+          items:
+            type: object
+          description: 来源信息
+        usage:
+          type: object
+          description: 使用统计
+
   securitySchemes:
     ApiKeyAuth:
       type: apiKey
@@ -352,6 +615,8 @@ tags:
     description: 系统管理和健康检查
   - name: WebSocket
     description: WebSocket 实时通信
+  - name: Batch Processing
+    description: 批量处理任务管理
 
 externalDocs:
   description: 更多文档

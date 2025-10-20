@@ -12,10 +12,17 @@ graph TB
     QD --> RS[RAG 服务管理器]
     RS --> RAG[RAG 提供商]
     RS --> SEARCH[搜索提供商]
-    RAG --> DIFY[Dify API]
+    RAG --> CONTEXT[Context Provider API]
+    RAG --> OPENAI[OpenAI API]
     RAG --> CUSTOM[自定义 RAG]
     SEARCH --> SERPER[Serper API]
     SEARCH --> GOOGLE[Google Search]
+    
+    subgraph "批量处理层"
+        BP[批量处理引擎]
+        TQ[任务队列]
+        BT[批量任务管理]
+    end
     
     subgraph "核心服务层"
         WS
@@ -31,10 +38,24 @@ graph TB
     
     subgraph "外部服务"
         DIFY
+        OPENAI
         CUSTOM
         SERPER
         GOOGLE
     end
+    
+    subgraph "存储层"
+        REDIS[Redis 缓存]
+        DB[数据库]
+        FS[文件存储]
+    end
+    
+    WS --> BP
+    BP --> TQ
+    TQ --> BT
+    BT --> REDIS
+    BT --> DB
+    BT --> FS
 ```
 
 ### 模块边界
@@ -59,7 +80,17 @@ graph TB
 - **边界**: 封装第三方 API 调用，标准化结果格式
 - **依赖**: 外部服务 API
 
-#### 5. 配置管理层 (`app/config.py`)
+#### 5. 批量处理层 (`app/services/batch_processor.py`)
+- **职责**: 处理离线批量任务，管理任务队列
+- **边界**: 接收批量任务，调度执行，返回结果
+- **依赖**: 任务队列、存储层、RAG服务
+
+#### 6. 任务队列层 (`app/services/task_queue.py`)
+- **职责**: 管理任务队列，处理任务调度
+- **边界**: 任务入队、出队、状态管理
+- **依赖**: Redis、数据库
+
+#### 7. 配置管理层 (`app/config.py`)
 - **职责**: 管理应用配置和环境变量
 - **边界**: 提供配置访问接口，验证配置有效性
 - **依赖**: 无外部依赖
@@ -88,7 +119,23 @@ class QueryResult:
     usage: Optional[Dict[str, Any]]   # 使用统计
 ```
 
-#### 3. WebSocket 消息格式
+#### 3. BatchTask (批量处理任务)
+```python
+class BatchTask:
+    task_id: str                      # 任务唯一标识
+    name: str                         # 任务名称
+    texts: List[str]                  # 待处理文本列表
+    options: Dict[str, Any]           # 处理选项
+    status: str                       # 任务状态
+    progress: float                   # 进度百分比
+    results: List[QueryResult]        # 处理结果
+    created_at: datetime              # 创建时间
+    started_at: Optional[datetime]    # 开始时间
+    completed_at: Optional[datetime]  # 完成时间
+    error_message: Optional[str]      # 错误信息
+```
+
+#### 4. WebSocket 消息格式
 ```json
 {
   "type": "message_type",             # 消息类型
@@ -182,14 +229,21 @@ class QueryResult:
   "version": "2.0.0",
   "services": {
     "rag": true,
-    "search": true
+    "search": true,
+    "batch_processing": true
   },
   "providers": {
-    "rag": {"name": "DifyProvider", "type": "RAG"},
+    "rag": {"name": "ContextProvider", "type": "RAG"},
     "search": {"name": "SerperProvider", "type": "Search"}
   }
 }
 ```
+
+#### 批量处理 API
+- **提交任务**: `POST /api/batch/tasks`
+- **查询状态**: `GET /api/batch/tasks/{task_id}`
+- **获取结果**: `GET /api/batch/tasks/{task_id}/results`
+- **取消任务**: `DELETE /api/batch/tasks/{task_id}`
 
 ## 非功能性需求映射
 
@@ -250,6 +304,10 @@ class QueryResult:
   - 理由: 异步 HTTP 客户端、支持 HTTP/2
 - **配置管理**: python-dotenv
   - 理由: 简单易用、环境变量管理
+- **任务队列**: Redis + Celery
+  - 理由: 高性能、支持分布式任务调度
+- **数据库**: PostgreSQL 或 SQLite
+  - 理由: 支持复杂查询、数据持久化
 
 ### 部署技术栈
 - **容器化**: Docker
@@ -317,31 +375,31 @@ class QueryResult:
 
 ### 第一阶段: 核心功能 (MVP)
 - **目标**: 实现基本的 WebSocket 通信和 RAG 查询
-- **功能**: WebSocket 连接、ASR 处理、问题检测、Dify 集成
+- **功能**: WebSocket 连接、ASR 处理、问题检测、多提供商集成
 - **时间**: 2-3 周
 - **验收**: 基本功能正常工作
 
-### 第二阶段: 多提供商支持
-- **目标**: 支持多种 RAG 和搜索服务提供商
-- **功能**: 提供商抽象层、Serper 集成、配置管理
+### 第二阶段: 批量处理支持
+- **目标**: 实现离线批量处理能力
+- **功能**: 批量处理引擎、任务队列、进度跟踪
 - **时间**: 2-3 周
-- **验收**: 多提供商切换正常工作
+- **验收**: 批量处理功能正常工作
 
 ### 第三阶段: 性能优化
 - **目标**: 优化性能和并发处理能力
-- **功能**: 异步优化、连接池、缓存策略
+- **功能**: 异步优化、连接池、缓存策略、批量处理优化
 - **时间**: 1-2 周
 - **验收**: 性能指标达到要求
 
 ### 第四阶段: 监控运维
 - **目标**: 完善监控和运维能力
-- **功能**: 指标监控、日志管理、告警机制
+- **功能**: 指标监控、日志管理、告警机制、批量处理监控
 - **时间**: 1-2 周
 - **验收**: 监控系统正常工作
 
 ### 第五阶段: 安全加固
 - **目标**: 加强安全性和合规性
-- **功能**: 认证授权、数据保护、安全审计
+- **功能**: 认证授权、数据保护、安全审计、批量处理安全
 - **时间**: 1-2 周
 - **验收**: 安全测试通过
 

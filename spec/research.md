@@ -52,8 +52,8 @@
 **直接集成方案**
 ```python
 # 直接调用不同服务
-if provider == "dify":
-    result = await dify_client.query(text)
+if provider == "context":
+    result = await context_client.query(text)
 elif provider == "openai":
     result = await openai_client.query(text)
 ```
@@ -61,9 +61,9 @@ elif provider == "openai":
 **适配器模式方案**
 ```python
 # 使用适配器模式
-class DifyAdapter:
+class ContextAdapter:
     async def query(self, text):
-        # 适配 Dify API
+        # 适配 Context Provider API
 
 class OpenAIAdapter:
     async def query(self, text):
@@ -202,15 +202,15 @@ async def query_with_retry(text):
 
 **硬编码配置**
 ```python
-DIFY_API_KEY = "hardcoded-key"
-DIFY_BASE_URL = "https://api.dify.ai/v1"
+CONTEXT_API_KEY = "hardcoded-key"
+CONTEXT_BASE_URL = "https://api.context.ai/v1"
 ```
 
 **环境变量配置**
 ```python
 import os
-DIFY_API_KEY = os.getenv("DIFY_API_KEY")
-DIFY_BASE_URL = os.getenv("DIFY_BASE_URL", "https://api.dify.ai/v1")
+CONTEXT_API_KEY = os.getenv("CONTEXT_API_KEY")
+CONTEXT_BASE_URL = os.getenv("CONTEXT_BASE_URL", "https://api.context.ai/v1")
 ```
 
 **配置文件方案**
@@ -442,10 +442,10 @@ MAX_MESSAGE_SIZE = 1024 * 1024  # 1MB
 # 使用 pytest-asyncio 和 httpx-mock
 import httpx_mock
 
-async def test_dify_provider():
+async def test_context_provider():
     with httpx_mock.HTTPXMock() as mock:
         mock.add_response(json={"answer": "test answer"})
-        result = await dify_provider.query("test")
+        result = await context_provider.query("test")
         assert result.content == "test answer"
 ```
 
@@ -528,7 +528,7 @@ import structlog
 logger = structlog.get_logger()
 
 logger.info("Query completed", 
-           provider="dify", 
+           provider="context", 
            duration=1.2, 
            tokens=150)
 ```
@@ -539,6 +539,178 @@ logger.info("Query completed",
 - WARNING：警告信息
 - ERROR：错误信息
 - CRITICAL：严重错误
+
+## 批量处理技术研究
+
+### 1. 批量处理架构设计
+
+#### 问题
+如何设计支持实时流式处理和离线批量处理的双模式架构？
+
+#### 研究过程
+
+**单一模式方案**
+- 优点：架构简单，实现容易
+- 缺点：无法满足不同场景需求
+- 适用场景：单一处理模式需求
+
+**双模式架构方案**
+```python
+class ProcessingMode(Enum):
+    STREAMING = "streaming"
+    BATCH = "batch"
+
+class RAGService:
+    async def process_streaming(self, text: str) -> AsyncIterator[QueryResult]:
+        # 实时流式处理
+        pass
+    
+    async def process_batch(self, texts: List[str]) -> List[QueryResult]:
+        # 离线批量处理
+        pass
+```
+
+#### 决策
+采用双模式架构设计。
+
+**决策依据**：
+1. **场景多样性**：实时交互和批量处理需求不同
+2. **资源优化**：批量处理可以更好地利用资源
+3. **用户体验**：实时响应和批量效率并重
+4. **扩展性**：为未来更多处理模式预留空间
+
+### 2. 任务队列技术选型
+
+#### 问题
+如何选择适合的任务队列技术来支持批量处理？
+
+#### 研究过程
+
+**Redis + 自定义队列方案**
+- 优点：简单、轻量、性能好
+- 缺点：功能相对简单，缺少高级特性
+- 评分：7/10
+
+**Celery + Redis方案**
+- 优点：功能完整、支持分布式、监控完善
+- 缺点：相对复杂、资源消耗较大
+- 评分：9/10
+
+**Apache Kafka方案**
+- 优点：高吞吐量、持久化、流处理
+- 缺点：复杂度高、运维成本高
+- 评分：6/10
+
+#### 决策
+选择 Celery + Redis 方案。
+
+**决策依据**：
+1. **功能完整性**：支持任务调度、重试、监控
+2. **分布式支持**：支持多worker节点
+3. **成熟度**：广泛使用，社区活跃
+4. **集成性**：与Python生态集成良好
+
+### 3. 批量处理进度跟踪
+
+#### 问题
+如何实现批量处理任务的实时进度跟踪？
+
+#### 研究过程
+
+**轮询方案**
+```python
+# 客户端定期查询任务状态
+async def poll_task_status(task_id: str):
+    while True:
+        status = await get_task_status(task_id)
+        if status.completed:
+            break
+        await asyncio.sleep(1)
+```
+
+**WebSocket推送方案**
+```python
+# 服务器主动推送进度更新
+async def notify_progress(task_id: str, progress: float):
+    await websocket.send({
+        "type": "batch_progress",
+        "task_id": task_id,
+        "progress": progress
+    })
+```
+
+**Server-Sent Events方案**
+```python
+# 使用SSE推送进度更新
+@app.get("/tasks/{task_id}/progress")
+async def stream_progress(task_id: str):
+    async def event_generator():
+        while not task.completed:
+            yield f"data: {task.progress}\n\n"
+            await asyncio.sleep(0.5)
+    return StreamingResponse(event_generator())
+```
+
+#### 决策
+采用 WebSocket 推送方案。
+
+**决策依据**：
+1. **实时性**：WebSocket提供最低延迟
+2. **一致性**：与现有WebSocket架构一致
+3. **效率**：避免轮询开销
+4. **用户体验**：实时反馈提升用户体验
+
+### 4. 批量处理存储策略
+
+#### 问题
+如何设计批量处理结果的存储策略？
+
+#### 研究过程
+
+**内存存储方案**
+```python
+# 结果存储在内存中
+class BatchTask:
+    results: List[QueryResult] = []
+```
+
+**数据库存储方案**
+```python
+# 结果存储在数据库中
+class BatchResult(Base):
+    task_id: str
+    result_index: int
+    content: str
+    metadata: JSON
+```
+
+**文件存储方案**
+```python
+# 结果存储在文件中
+def save_results(task_id: str, results: List[QueryResult]):
+    with open(f"results/{task_id}.json", "w") as f:
+        json.dump(results, f)
+```
+
+**混合存储方案**
+```python
+# 小结果内存存储，大结果文件存储
+class BatchTask:
+    def store_result(self, result: QueryResult):
+        if len(self.results) < 1000:
+            self.results.append(result)
+        else:
+            self.save_to_file(result)
+```
+
+#### 决策
+采用混合存储方案。
+
+**决策依据**：
+1. **性能**：小结果快速访问
+2. **容量**：大结果文件存储
+3. **成本**：平衡性能和存储成本
+4. **灵活性**：支持不同规模的任务
 
 ## 未来扩展研究
 
@@ -568,6 +740,25 @@ class MultiModalProvider(BaseRAGProvider):
 - 使用 TensorFlow Lite 或 ONNX Runtime
 - 实现模型量化和压缩
 - 支持离线推理
+
+### 3. 分布式批量处理
+
+#### 研究内容
+- 跨节点任务分发
+- 负载均衡策略
+- 故障恢复机制
+
+#### 技术方案
+```python
+class DistributedBatchProcessor:
+    async def distribute_tasks(self, tasks: List[BatchTask]):
+        # 任务分发到多个节点
+        pass
+    
+    async def load_balance(self):
+        # 负载均衡
+        pass
+```
 
 ## 经验教训
 

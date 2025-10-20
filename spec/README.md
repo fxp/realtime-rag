@@ -33,6 +33,8 @@
 ```
 spec/
 ├── README.md                           # 本文件 - 文档导航
+├── CONSTITUTION.md                     # 项目宪法 - 架构原则和质量标准
+├── CHECKLIST.md                        # 规范完整性检查清单
 ├── spec.md                            # 核心规范文档 (GitHub Spec-Kit)
 ├── plan.md                            # 技术实现计划 (GitHub Spec-Kit)
 ├── tasks.md                           # 任务分解 (GitHub Spec-Kit)
