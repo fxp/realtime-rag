@@ -5,6 +5,7 @@ from .context import ContextProvider
 from .openai import OpenAIProvider
 from .serper import SerperProvider
 from .custom import CustomRAGProvider
+from .dify import DifyProvider
 
 __all__ = [
     "BaseRAGProvider",
@@ -12,5 +13,6 @@ __all__ = [
     "ContextProvider",
     "OpenAIProvider",
     "SerperProvider",
-    "CustomRAGProvider"
+    "CustomRAGProvider",
+    "DifyProvider"
 ]

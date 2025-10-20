@@ -68,6 +68,14 @@ class Config:
                 "timeout": float(os.getenv("OPENAI_TIMEOUT", "30.0")),
                 "model": os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
             })
+        elif provider == "dify":
+            config.update({
+                "api_key": os.getenv("DIFY_API_KEY"),
+                "base_url": os.getenv("DIFY_BASE_URL", "https://api.dify.ai/v1"),
+                "timeout": float(os.getenv("DIFY_TIMEOUT", "30.0")),
+                "user": os.getenv("DIFY_USER", "default-user"),
+                "conversation_id": os.getenv("DIFY_CONVERSATION_ID")
+            })
         elif provider == "custom":
             config.update({
                 "api_url": os.getenv("CUSTOM_RAG_API_URL"),
@@ -128,6 +136,9 @@ class Config:
                 return False
             elif provider == "openai" and not self.rag_config.get("api_key"):
                 logger.error("OPENAI_API_KEY is required for OpenAI provider")
+                return False
+            elif provider == "dify" and not self.rag_config.get("api_key"):
+                logger.error("DIFY_API_KEY is required for Dify provider")
                 return False
             elif provider == "custom" and not self.rag_config.get("api_url"):
                 logger.error("CUSTOM_RAG_API_URL is required for Custom provider")

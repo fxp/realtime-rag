@@ -7,7 +7,7 @@
 - ✨ **实时 WebSocket 通信** - 低延迟的双向实时通信
 - 🤖 **智能问题检测** - 自动识别用户问题，支持中英文
 - 🔄 **流式答案传输** - 分块流式返回答案，提升用户体验
-- 🔌 **多提供商支持** - 支持 Context Provider、OpenAI、Serper 等多种服务
+- 🔌 **多提供商支持** - 支持 Dify、Context Provider、OpenAI、Serper 等多种服务
 - 📦 **批量处理** - 支持离线批量处理大量文本数据
 - ⚙️ **灵活配置** - 基于环境变量的配置管理
 - 🎯 **会话管理** - 完整的会话状态跟踪和控制
@@ -32,6 +32,7 @@ realtime-rag/
 │   │       ├── base.py    # 基础抽象类
 │   │       ├── context.py # Context 提供商
 │   │       ├── openai.py  # OpenAI 提供商
+│   │       ├── dify.py    # Dify 提供商
 │   │       ├── serper.py  # Serper 提供商
 │   │       └── custom.py  # 自定义提供商
 │   └── routers/           # 路由处理
@@ -189,6 +190,18 @@ OPENAI_BASE_URL=https://api.openai.com
 OPENAI_MODEL=gpt-3.5-turbo
 OPENAI_TIMEOUT=30.0
 ```
+
+#### Dify (推荐)
+
+```bash
+RAG_PROVIDER=dify
+DIFY_API_KEY=app-xxxxxxxxxxxxxxxxxxxx
+DIFY_BASE_URL=https://api.dify.ai/v1
+DIFY_TIMEOUT=30.0
+DIFY_USER=default-user
+```
+
+> 📖 **详细文档**: [Dify Provider 使用指南](docs/DIFY_PROVIDER.md)
 
 #### 自定义 RAG 服务
 

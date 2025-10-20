@@ -3,7 +3,7 @@
 from typing import Dict, Any, Optional, AsyncIterator
 from app.services.rag_providers.base import BaseRAGProvider, BaseSearchProvider
 from app.services.rag_providers import (
-    ContextProvider, OpenAIProvider, SerperProvider, CustomRAGProvider
+    ContextProvider, OpenAIProvider, SerperProvider, CustomRAGProvider, DifyProvider
 )
 from app.models.batch_task import QueryResult
 import logging
@@ -50,6 +50,8 @@ class RAGService:
                 self.rag_provider = ContextProvider(config)
             elif provider_type == "openai":
                 self.rag_provider = OpenAIProvider(config)
+            elif provider_type == "dify":
+                self.rag_provider = DifyProvider(config)
             elif provider_type == "custom":
                 self.rag_provider = CustomRAGProvider(config)
             else:
