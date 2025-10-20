@@ -1,124 +1,115 @@
-"""Serper 搜索提供商实现"""
-from __future__ import annotations
-from typing import Optional, Dict, Any
+"""Serper搜索提供商实现"""
+
 import httpx
-from .base import BaseSearchProvider, QueryResult
+from typing import Dict, Any
+from .base import BaseSearchProvider
+from app.models.batch_task import QueryResult
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SerperProvider(BaseSearchProvider):
-    """Serper 搜索提供商"""
+    """Serper搜索服务实现
     
-    def _validate_config(self) -> None:
-        """验证 Serper 配置"""
-        required_fields = ["api_key"]
-        for field in required_fields:
-            if field not in self.config or not self.config[field]:
-                raise ValueError(f"Serper configuration missing required field: {field}")
+    基于Serper API的搜索服务提供商。
+    """
     
-    async def search(
-        self,
-        query: str,
-        num_results: int = 10,
-        **kwargs
-    ) -> QueryResult:
-        """执行 Serper 搜索"""
-        api_key = self.config["api_key"]
-        timeout = self.config.get("timeout", 30.0)
+    def __init__(self, config: Dict[str, Any]):
+        """初始化Serper Provider
         
-        url = "https://google.serper.dev/search"
+        Args:
+            config: 配置，包含api_key、timeout等
+        """
+        super().__init__(config)
+        self.api_key = config.get("api_key")
+        self.base_url = "https://google.serper.dev"
+        self.timeout = config.get("timeout", 10.0)
+        
+        if not self.api_key:
+            raise ValueError("Serper Provider requires api_key in config")
+    
+    async def search(self, query: str, **kwargs) -> QueryResult:
+        """执行搜索
+        
+        Args:
+            query: 搜索查询
+            **kwargs: 额外参数，如num、gl等
+            
+        Returns:
+            QueryResult: 搜索结果
+        """
+        url = f"{self.base_url}/search"
         headers = {
-            "X-API-KEY": api_key,
+            "X-API-KEY": self.api_key,
             "Content-Type": "application/json"
         }
         
         payload = {
             "q": query,
-            "num": num_results,
-            **kwargs  # 支持额外参数如 country, language 等
+            "num": kwargs.get("num", 10),
+            "gl": kwargs.get("gl", "us")
         }
         
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, headers=headers, json=payload)
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
-                result = response.json()
+                data = response.json()
                 
                 # 提取搜索结果
-                organic_results = result.get("organic", [])
-                knowledge_graph = result.get("knowledgeGraph")
+                organic_results = data.get("organic", [])
                 
-                # 构建回答内容
+                # 构建答案内容
                 content_parts = []
-                
-                # 添加知识图谱信息
-                if knowledge_graph:
-                    title = knowledge_graph.get("title", "")
-                    description = knowledge_graph.get("description", "")
-                    if title and description:
-                        content_parts.append(f"**{title}**\n{description}")
-                
-                # 添加搜索结果
-                if organic_results:
-                    content_parts.append("\n**相关搜索结果:**")
-                    for i, item in enumerate(organic_results[:5], 1):
-                        title = item.get("title", "")
-                        snippet = item.get("snippet", "")
-                        link = item.get("link", "")
-                        if title and snippet:
-                            content_parts.append(f"{i}. **{title}**\n   {snippet}\n   {link}")
-                
-                # 添加答案框信息
-                answer_box = result.get("answerBox", {})
-                if answer_box:
-                    answer = answer_box.get("answer", "")
-                    snippet = answer_box.get("snippet", "")
-                    if answer:
-                        content_parts.insert(0, f"**答案:** {answer}")
-                    elif snippet:
-                        content_parts.insert(0, f"**信息:** {snippet}")
-                
-                content = "\n\n".join(content_parts) if content_parts else "未找到相关信息。"
-                
-                # 构建元数据
-                metadata = {
-                    "search_results_count": len(organic_results),
-                    "has_knowledge_graph": bool(knowledge_graph),
-                    "has_answer_box": bool(answer_box),
-                    "search_parameters": payload
-                }
-                
-                # 构建来源信息
                 sources = []
-                for item in organic_results:
+                
+                for idx, result in enumerate(organic_results[:5], 1):
+                    title = result.get("title", "")
+                    snippet = result.get("snippet", "")
+                    link = result.get("link", "")
+                    
+                    content_parts.append(f"{idx}. {title}\n{snippet}")
                     sources.append({
-                        "title": item.get("title", ""),
-                        "url": item.get("link", ""),
-                        "snippet": item.get("snippet", "")
+                        "title": title,
+                        "url": link,
+                        "snippet": snippet,
+                        "position": idx
                     })
+                
+                content = "\n\n".join(content_parts)
                 
                 return QueryResult(
                     content=content,
-                    metadata=metadata,
-                    sources=sources
+                    metadata={
+                        "provider": self.name,
+                        "query": query,
+                        "search_time": data.get("searchParameters", {}).get("time")
+                    },
+                    sources=sources,
+                    usage={
+                        "results_count": len(organic_results)
+                    }
                 )
+        except httpx.HTTPError as e:
+            logger.error(f"Serper search failed: {e}")
+            raise Exception(f"Serper搜索失败: {str(e)}")
+    
+    async def health_check(self) -> bool:
+        """健康检查
         
-        except httpx.TimeoutException as e:
-            error_msg = f"搜索请求超时（超过{timeout}秒）"
-            raise Exception(f"调用 Serper 搜索服务失败：{error_msg}") from e
-        
-        except httpx.HTTPStatusError as e:
-            status_code = e.response.status_code
-            try:
-                error_detail = e.response.text[:200]
-            except:
-                error_detail = "无法读取错误详情"
-            error_msg = f"HTTP {status_code} - {error_detail}"
-            raise Exception(f"调用 Serper 搜索服务失败：{error_msg}") from e
-        
-        except httpx.RequestError as e:
-            error_msg = f"网络错误 - {type(e).__name__}: {str(e)[:100]}"
-            raise Exception(f"调用 Serper 搜索服务失败：{error_msg}") from e
-        
+        Returns:
+            bool: 服务是否可用
+        """
+        try:
+            # 执行一个简单的搜索测试
+            await self.search("test", num=1)
+            return True
         except Exception as e:
-            error_msg = f"未知错误 - {type(e).__name__}: {str(e)[:100]}"
-            raise Exception(f"调用 Serper 搜索服务失败：{error_msg}") from e
+            logger.error(f"Serper health check failed: {e}")
+            return False
+    
+    @property
+    def name(self) -> str:
+        """提供商名称"""
+        return "SerperProvider"
