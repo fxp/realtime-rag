@@ -1,182 +1,145 @@
-"""自定义 RAG 提供商示例"""
-from __future__ import annotations
-from typing import Optional, Dict, Any
+"""自定义RAG提供商实现"""
+
 import httpx
-from .base import BaseRAGProvider, QueryResult
+from typing import Dict, Any, AsyncIterator
+from .base import BaseRAGProvider
+from app.models.batch_task import QueryResult
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class CustomRAGProvider(BaseRAGProvider):
-    """自定义 RAG 提供商示例"""
+    """自定义RAG服务实现
     
-    def _validate_config(self) -> None:
-        """验证自定义配置"""
-        required_fields = ["api_key", "base_url"]
-        for field in required_fields:
-            if field not in self.config or not self.config[field]:
-                raise ValueError(f"Custom RAG configuration missing required field: {field}")
+    支持自定义RAG服务的提供商，可以对接任何符合标准接口的RAG服务。
+    """
     
-    async def query(
-        self, 
-        text: str, 
-        user: str = "default-user",
-        conversation_id: Optional[str] = None,
-        **kwargs
-    ) -> QueryResult:
-        """执行自定义 RAG 查询"""
-        api_key = self.config["api_key"]
-        base_url = self.config["base_url"]
-        timeout = self.config.get("timeout", 60.0)
+    def __init__(self, config: Dict[str, Any]):
+        """初始化自定义RAG Provider
         
-        # 自定义 API 端点
-        url = f"{base_url}/query"
+        Args:
+            config: 配置，包含api_url、api_key、timeout等
+        """
+        super().__init__(config)
+        self.api_url = config.get("api_url")
+        self.api_key = config.get("api_key")
+        self.timeout = config.get("timeout", 30.0)
+        self.headers = config.get("headers", {})
+        
+        if not self.api_url:
+            raise ValueError("Custom RAG Provider requires api_url in config")
+        
+        # 如果提供了API密钥，添加到headers
+        if self.api_key:
+            self.headers["Authorization"] = f"Bearer {self.api_key}"
+    
+    async def query(self, question: str, **kwargs) -> QueryResult:
+        """查询自定义RAG服务
+        
+        Args:
+            question: 用户问题
+            **kwargs: 额外参数
+            
+        Returns:
+            QueryResult: 查询结果
+        """
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            **self.headers,
             "Content-Type": "application/json"
         }
         
         payload = {
-            "question": text,
-            "user_id": user,
-            "session_id": conversation_id,
-            **kwargs  # 支持额外参数
+            "question": question,
+            **kwargs
         }
         
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, headers=headers, json=payload)
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(self.api_url, json=payload, headers=headers)
                 response.raise_for_status()
-                result = response.json()
+                data = response.json()
                 
-                # 根据自定义 API 响应格式解析结果
-                answer = result.get("answer", "")
-                metadata = result.get("metadata", {})
-                sources = result.get("sources", [])
-                
-                return QueryResult(
-                    content=answer if answer else "未获取到回答。",
-                    metadata=metadata,
-                    sources=sources
+                # 尝试从不同的响应格式中提取内容
+                content = (
+                    data.get("answer") or 
+                    data.get("content") or 
+                    data.get("response") or
+                    str(data)
                 )
-        
-        except httpx.TimeoutException as e:
-            error_msg = f"请求超时（超过{timeout}秒）"
-            raise Exception(f"调用自定义 RAG 服务失败：{error_msg}") from e
-        
-        except httpx.HTTPStatusError as e:
-            status_code = e.response.status_code
-            try:
-                error_detail = e.response.text[:200]
-            except:
-                error_detail = "无法读取错误详情"
-            error_msg = f"HTTP {status_code} - {error_detail}"
-            raise Exception(f"调用自定义 RAG 服务失败：{error_msg}") from e
-        
-        except httpx.RequestError as e:
-            error_msg = f"网络错误 - {type(e).__name__}: {str(e)[:100]}"
-            raise Exception(f"调用自定义 RAG 服务失败：{error_msg}") from e
-        
-        except Exception as e:
-            error_msg = f"未知错误 - {type(e).__name__}: {str(e)[:100]}"
-            raise Exception(f"调用自定义 RAG 服务失败：{error_msg}") from e
-    
-    async def health_check(self) -> bool:
-        """自定义 RAG 健康检查"""
-        try:
-            # 执行简单查询测试连接
-            await self.query("test", user="health-check")
-            return True
-        except Exception:
-            return False
-
-
-class CustomSearchProvider(BaseSearchProvider):
-    """自定义搜索提供商示例"""
-    
-    def _validate_config(self) -> None:
-        """验证自定义搜索配置"""
-        required_fields = ["api_key", "base_url"]
-        for field in required_fields:
-            if field not in self.config or not self.config[field]:
-                raise ValueError(f"Custom search configuration missing required field: {field}")
-    
-    async def search(
-        self,
-        query: str,
-        num_results: int = 10,
-        **kwargs
-    ) -> QueryResult:
-        """执行自定义搜索"""
-        api_key = self.config["api_key"]
-        base_url = self.config["base_url"]
-        timeout = self.config.get("timeout", 30.0)
-        
-        # 自定义搜索 API 端点
-        url = f"{base_url}/search"
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "query": query,
-            "limit": num_results,
-            **kwargs  # 支持额外参数
-        }
-        
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                result = response.json()
-                
-                # 根据自定义搜索 API 响应格式解析结果
-                results = result.get("results", [])
-                
-                # 构建回答内容
-                content_parts = []
-                if results:
-                    content_parts.append("**搜索结果:**")
-                    for i, item in enumerate(results[:5], 1):
-                        title = item.get("title", "")
-                        summary = item.get("summary", "")
-                        url = item.get("url", "")
-                        if title and summary:
-                            content_parts.append(f"{i}. **{title}**\n   {summary}\n   {url}")
-                
-                content = "\n\n".join(content_parts) if content_parts else "未找到相关信息。"
-                
-                # 构建来源信息
-                sources = []
-                for item in results:
-                    sources.append({
-                        "title": item.get("title", ""),
-                        "url": item.get("url", ""),
-                        "summary": item.get("summary", "")
-                    })
                 
                 return QueryResult(
                     content=content,
-                    metadata={"search_results_count": len(results)},
-                    sources=sources
+                    metadata={
+                        "provider": self.name,
+                        **data.get("metadata", {})
+                    },
+                    sources=data.get("sources"),
+                    usage=data.get("usage")
                 )
+        except httpx.HTTPError as e:
+            logger.error(f"Custom RAG query failed: {e}")
+            raise Exception(f"自定义RAG查询失败: {str(e)}")
+    
+    async def stream_query(self, question: str, **kwargs) -> AsyncIterator[str]:
+        """流式查询自定义RAG服务
         
-        except httpx.TimeoutException as e:
-            error_msg = f"搜索请求超时（超过{timeout}秒）"
-            raise Exception(f"调用自定义搜索服务失败：{error_msg}") from e
+        Args:
+            question: 用户问题
+            **kwargs: 额外参数
+            
+        Yields:
+            str: 答案片段
+        """
+        headers = {
+            **self.headers,
+            "Content-Type": "application/json"
+        }
         
-        except httpx.HTTPStatusError as e:
-            status_code = e.response.status_code
-            try:
-                error_detail = e.response.text[:200]
-            except:
-                error_detail = "无法读取错误详情"
-            error_msg = f"HTTP {status_code} - {error_detail}"
-            raise Exception(f"调用自定义搜索服务失败：{error_msg}") from e
+        payload = {
+            "question": question,
+            "stream": True,
+            **kwargs
+        }
         
-        except httpx.RequestError as e:
-            error_msg = f"网络错误 - {type(e).__name__}: {str(e)[:100]}"
-            raise Exception(f"调用自定义搜索服务失败：{error_msg}") from e
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream("POST", self.api_url, json=payload, headers=headers) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if line:
+                            # 尝试解析JSON格式的流式响应
+                            try:
+                                import json
+                                chunk = json.loads(line)
+                                content = chunk.get("content") or chunk.get("delta") or ""
+                                if content:
+                                    yield content
+                            except json.JSONDecodeError:
+                                # 如果不是JSON，直接返回文本
+                                yield line
+        except httpx.HTTPError as e:
+            logger.error(f"Custom RAG stream query failed: {e}")
+            raise Exception(f"自定义RAG流式查询失败: {str(e)}")
+    
+    async def health_check(self) -> bool:
+        """健康检查
         
+        Returns:
+            bool: 服务是否可用
+        """
+        try:
+            # 尝试发送一个健康检查请求
+            health_url = self.config.get("health_url", f"{self.api_url}/health")
+            
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(health_url, headers=self.headers)
+                return response.status_code == 200
         except Exception as e:
-            error_msg = f"未知错误 - {type(e).__name__}: {str(e)[:100]}"
-            raise Exception(f"调用自定义搜索服务失败：{error_msg}") from e
+            logger.error(f"Custom RAG health check failed: {e}")
+            return False
+    
+    @property
+    def name(self) -> str:
+        """提供商名称"""
+        return "CustomRAGProvider"

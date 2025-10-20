@@ -1,166 +1,191 @@
-"""RAG 服务管理器"""
-from __future__ import annotations
-from typing import Optional, Dict, Any, Union
-from .rag_providers.base import BaseRAGProvider, BaseSearchProvider, QueryResult, RAGProviderFactory
-from .rag_providers.dify import DifyProvider
-from .rag_providers.serper import SerperProvider
-from .rag_providers.custom import CustomRAGProvider, CustomSearchProvider
+"""RAG服务管理器"""
+
+from typing import Dict, Any, Optional, AsyncIterator
+from app.services.rag_providers.base import BaseRAGProvider, BaseSearchProvider
+from app.services.rag_providers import (
+    ContextProvider, OpenAIProvider, SerperProvider, CustomRAGProvider
+)
+from app.models.batch_task import QueryResult
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class RAGService:
-    """RAG 服务管理器"""
+    """RAG服务管理器
+    
+    统一管理RAG和搜索服务提供商，提供统一的查询接口。
+    """
     
     def __init__(self, config: Dict[str, Any]):
-        """初始化 RAG 服务
+        """初始化RAG服务
         
         Args:
-            config: 服务配置
+            config: 服务配置，包含RAG和搜索提供商的配置
         """
         self.config = config
-        self._rag_provider: Optional[BaseRAGProvider] = None
-        self._search_provider: Optional[BaseSearchProvider] = None
-        self._initialize_providers()
-    
-    def _initialize_providers(self) -> None:
-        """初始化提供商"""
-        # 注册 RAG 提供商
-        RAGProviderFactory.register_provider("dify", DifyProvider)
-        RAGProviderFactory.register_provider("custom", CustomRAGProvider)
+        self.rag_provider: Optional[BaseRAGProvider] = None
+        self.search_provider: Optional[BaseSearchProvider] = None
         
-        # 初始化 RAG 提供商
-        rag_config = self.config.get("rag", {})
+        # 初始化RAG提供商
+        rag_config = config.get("rag", {})
         if rag_config:
-            provider_type = rag_config.get("provider", "dify")
-            provider_config = rag_config.get("config", {})
-            try:
-                self._rag_provider = RAGProviderFactory.create_provider(provider_type, provider_config)
-            except Exception as e:
-                print(f"Warning: Failed to initialize RAG provider {provider_type}: {e}")
+            self._init_rag_provider(rag_config)
         
         # 初始化搜索提供商
-        search_config = self.config.get("search", {})
+        search_config = config.get("search", {})
         if search_config:
-            provider_type = search_config.get("provider", "serper")
-            provider_config = search_config.get("config", {})
-            try:
-                if provider_type == "serper":
-                    self._search_provider = SerperProvider(provider_config)
-                elif provider_type == "custom":
-                    self._search_provider = CustomSearchProvider(provider_config)
-                else:
-                    print(f"Warning: Unknown search provider: {provider_type}")
-            except Exception as e:
-                print(f"Warning: Failed to initialize search provider {provider_type}: {e}")
+            self._init_search_provider(search_config)
     
-    async def query(
-        self,
-        text: str,
-        user: str = "default-user",
-        conversation_id: Optional[str] = None,
-        use_search: bool = False,
-        **kwargs
-    ) -> QueryResult:
+    def _init_rag_provider(self, config: Dict[str, Any]) -> None:
+        """初始化RAG提供商
+        
+        Args:
+            config: RAG提供商配置
+        """
+        provider_type = config.get("provider", "").lower()
+        
+        try:
+            if provider_type == "context":
+                self.rag_provider = ContextProvider(config)
+            elif provider_type == "openai":
+                self.rag_provider = OpenAIProvider(config)
+            elif provider_type == "custom":
+                self.rag_provider = CustomRAGProvider(config)
+            else:
+                logger.warning(f"Unknown RAG provider type: {provider_type}")
+        except Exception as e:
+            logger.error(f"Failed to initialize RAG provider: {e}")
+    
+    def _init_search_provider(self, config: Dict[str, Any]) -> None:
+        """初始化搜索提供商
+        
+        Args:
+            config: 搜索提供商配置
+        """
+        provider_type = config.get("provider", "").lower()
+        
+        try:
+            if provider_type == "serper":
+                self.search_provider = SerperProvider(config)
+            else:
+                logger.warning(f"Unknown search provider type: {provider_type}")
+        except Exception as e:
+            logger.error(f"Failed to initialize search provider: {e}")
+    
+    async def query(self, question: str, use_search: bool = False, **kwargs) -> QueryResult:
         """执行查询
         
         Args:
-            text: 查询文本
-            user: 用户标识
-            conversation_id: 会话ID
-            use_search: 是否使用搜索提供商
-            **kwargs: 其他参数
+            question: 用户问题
+            use_search: 是否使用搜索服务（如果检测到搜索关键词）
+            **kwargs: 额外参数
             
         Returns:
             QueryResult: 查询结果
             
         Raises:
-            Exception: 查询失败时抛出
+            Exception: 如果查询失败或没有可用的提供商
         """
-        if use_search and self._search_provider:
-            return await self._search_provider.search(text, **kwargs)
-        elif self._rag_provider:
-            return await self._rag_provider.query(text, user, conversation_id, **kwargs)
-        else:
-            raise Exception("没有可用的 RAG 或搜索提供商")
+        # 自动检测是否需要使用搜索
+        if not use_search:
+            use_search = self._should_use_search(question)
+        
+        # 优先使用搜索服务
+        if use_search and self.search_provider:
+            logger.info(f"Using search provider for question: {question}")
+            return await self.search_provider.search(question, **kwargs)
+        
+        # 使用RAG服务
+        if self.rag_provider:
+            logger.info(f"Using RAG provider for question: {question}")
+            return await self.rag_provider.query(question, **kwargs)
+        
+        raise Exception("没有可用的RAG或搜索服务提供商")
     
-    async def health_check(self) -> Dict[str, bool]:
+    async def stream_query(self, question: str, **kwargs) -> AsyncIterator[str]:
+        """流式查询
+        
+        Args:
+            question: 用户问题
+            **kwargs: 额外参数
+            
+        Yields:
+            str: 答案片段
+            
+        Raises:
+            Exception: 如果查询失败或没有可用的RAG提供商
+        """
+        if not self.rag_provider:
+            raise Exception("没有可用的RAG服务提供商")
+        
+        logger.info(f"Streaming query for question: {question}")
+        async for chunk in self.rag_provider.stream_query(question, **kwargs):
+            yield chunk
+    
+    def _should_use_search(self, question: str) -> bool:
+        """判断是否应该使用搜索服务
+        
+        检测问题中是否包含搜索相关的关键词。
+        
+        Args:
+            question: 用户问题
+            
+        Returns:
+            bool: 如果应该使用搜索返回True
+        """
+        search_keywords = [
+            '搜索', '查找', '找', '搜', 'search', 'find', 'look up',
+            '最新', '新闻', 'latest', 'news', 'recent',
+            '天气', 'weather', '股票', 'stock'
+        ]
+        
+        question_lower = question.lower()
+        return any(keyword in question_lower for keyword in search_keywords)
+    
+    async def health_check(self) -> Dict[str, Any]:
         """健康检查
         
         Returns:
-            Dict[str, bool]: 各提供商健康状态
+            Dict[str, Any]: 健康检查结果
         """
-        status = {}
+        result = {
+            "rag": False,
+            "search": False,
+            "providers": {}
+        }
         
-        if self._rag_provider:
+        # 检查RAG提供商
+        if self.rag_provider:
             try:
-                status["rag"] = await self._rag_provider.health_check()
-            except Exception:
-                status["rag"] = False
-        else:
-            status["rag"] = False
+                result["rag"] = await self.rag_provider.health_check()
+                result["providers"]["rag"] = {
+                    "name": self.rag_provider.name,
+                    "type": self.rag_provider.provider_type,
+                    "status": result["rag"]
+                }
+            except Exception as e:
+                logger.error(f"RAG provider health check failed: {e}")
         
-        if self._search_provider:
+        # 检查搜索提供商
+        if self.search_provider:
             try:
-                status["search"] = await self._search_provider.health_check()
-            except Exception:
-                status["search"] = False
-        else:
-            status["search"] = False
+                result["search"] = await self.search_provider.health_check()
+                result["providers"]["search"] = {
+                    "name": self.search_provider.name,
+                    "type": self.search_provider.provider_type,
+                    "status": result["search"]
+                }
+            except Exception as e:
+                logger.error(f"Search provider health check failed: {e}")
         
-        return status
+        return result
     
-    def get_provider_info(self) -> Dict[str, Any]:
-        """获取提供商信息
-        
-        Returns:
-            Dict[str, Any]: 提供商信息
-        """
-        info = {}
-        
-        if self._rag_provider:
-            info["rag"] = {
-                "name": self._rag_provider.get_provider_name(),
-                "type": "RAG"
-            }
-        
-        if self._search_provider:
-            info["search"] = {
-                "name": self._search_provider.get_provider_name(),
-                "type": "Search"
-            }
-        
-        return info
-    
+    @property
     def is_available(self) -> bool:
-        """检查是否有可用的提供商
+        """检查是否有可用的服务提供商
         
         Returns:
-            bool: 是否有可用的提供商
+            bool: 如果有任何可用的提供商返回True
         """
-        return self._rag_provider is not None or self._search_provider is not None
-
-
-# 全局 RAG 服务实例
-_rag_service: Optional[RAGService] = None
-
-
-def initialize_rag_service(config: Dict[str, Any]) -> RAGService:
-    """初始化全局 RAG 服务
-    
-    Args:
-        config: 服务配置
-        
-    Returns:
-        RAGService: RAG 服务实例
-    """
-    global _rag_service
-    _rag_service = RAGService(config)
-    return _rag_service
-
-
-def get_rag_service() -> Optional[RAGService]:
-    """获取全局 RAG 服务实例
-    
-    Returns:
-        Optional[RAGService]: RAG 服务实例，如果未初始化则返回 None
-    """
-    return _rag_service
+        return self.rag_provider is not None or self.search_provider is not None
