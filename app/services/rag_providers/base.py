@@ -1,61 +1,53 @@
-"""RAG/搜索系统基础抽象类"""
-from __future__ import annotations
+"""RAG和搜索提供商的基础抽象类"""
+
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any
-from dataclasses import dataclass
-
-
-@dataclass
-class QueryResult:
-    """查询结果数据类"""
-    content: str
-    metadata: Optional[Dict[str, Any]] = None
-    sources: Optional[list] = None
-    usage: Optional[Dict[str, Any]] = None
+from typing import Dict, Any, Optional, AsyncIterator
+from app.models.batch_task import QueryResult
 
 
 class BaseRAGProvider(ABC):
-    """RAG/搜索系统基础抽象类"""
+    """RAG提供商基础抽象类
+    
+    定义RAG服务提供商的标准接口。所有RAG提供商必须实现这些方法。
+    """
     
     def __init__(self, config: Dict[str, Any]):
-        """初始化提供商
+        """初始化RAG提供商
         
         Args:
-            config: 提供商配置字典
+            config: 提供商配置，包含API密钥、端点等
         """
         self.config = config
-        self._validate_config()
     
     @abstractmethod
-    def _validate_config(self) -> None:
-        """验证配置参数
+    async def query(self, question: str, **kwargs) -> QueryResult:
+        """查询RAG服务
         
+        Args:
+            question: 用户问题
+            **kwargs: 额外的查询参数
+            
+        Returns:
+            QueryResult: 标准化的查询结果
+            
         Raises:
-            ValueError: 配置无效时抛出
+            Exception: 查询失败时抛出异常
         """
         pass
     
     @abstractmethod
-    async def query(
-        self, 
-        text: str, 
-        user: str = "default-user",
-        conversation_id: Optional[str] = None,
-        **kwargs
-    ) -> QueryResult:
-        """执行查询
+    async def stream_query(self, question: str, **kwargs) -> AsyncIterator[str]:
+        """流式查询RAG服务
         
         Args:
-            text: 查询文本
-            user: 用户标识
-            conversation_id: 会话ID（可选）
-            **kwargs: 其他查询参数
+            question: 用户问题
+            **kwargs: 额外的查询参数
             
-        Returns:
-            QueryResult: 查询结果
+        Yields:
+            str: 流式返回的答案片段
             
         Raises:
-            Exception: 查询失败时抛出
+            Exception: 查询失败时抛出异常
         """
         pass
     
@@ -64,124 +56,68 @@ class BaseRAGProvider(ABC):
         """健康检查
         
         Returns:
-            bool: 服务是否可用
+            bool: 如果服务可用返回True，否则返回False
         """
         pass
     
-    def get_provider_name(self) -> str:
-        """获取提供商名称
-        
-        Returns:
-            str: 提供商名称
-        """
-        return self.__class__.__name__
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """提供商名称"""
+        pass
+    
+    @property
+    def provider_type(self) -> str:
+        """提供商类型"""
+        return "RAG"
 
 
 class BaseSearchProvider(ABC):
-    """搜索系统基础抽象类"""
+    """搜索提供商基础抽象类
+    
+    定义搜索服务提供商的标准接口。所有搜索提供商必须实现这些方法。
+    """
     
     def __init__(self, config: Dict[str, Any]):
-        """初始化提供商
+        """初始化搜索提供商
         
         Args:
-            config: 提供商配置字典
+            config: 提供商配置，包含API密钥、端点等
         """
         self.config = config
-        self._validate_config()
     
     @abstractmethod
-    def _validate_config(self) -> None:
-        """验证配置参数
-        
-        Raises:
-            ValueError: 配置无效时抛出
-        """
-        pass
-    
-    @abstractmethod
-    async def search(
-        self,
-        query: str,
-        num_results: int = 10,
-        **kwargs
-    ) -> QueryResult:
+    async def search(self, query: str, **kwargs) -> QueryResult:
         """执行搜索
         
         Args:
             query: 搜索查询
-            num_results: 返回结果数量
-            **kwargs: 其他搜索参数
+            **kwargs: 额外的搜索参数
             
         Returns:
-            QueryResult: 搜索结果
+            QueryResult: 标准化的搜索结果
             
         Raises:
-            Exception: 搜索失败时抛出
+            Exception: 搜索失败时抛出异常
         """
         pass
     
+    @abstractmethod
     async def health_check(self) -> bool:
         """健康检查
         
         Returns:
-            bool: 服务是否可用
+            bool: 如果服务可用返回True，否则返回False
         """
-        try:
-            # 执行简单搜索测试
-            await self.search("test", num_results=1)
-            return True
-        except Exception:
-            return False
+        pass
     
-    def get_provider_name(self) -> str:
-        """获取提供商名称
-        
-        Returns:
-            str: 提供商名称
-        """
-        return self.__class__.__name__
-
-
-class RAGProviderFactory:
-    """RAG 提供商工厂类"""
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """提供商名称"""
+        pass
     
-    _providers: Dict[str, type] = {}
-    
-    @classmethod
-    def register_provider(cls, name: str, provider_class: type) -> None:
-        """注册提供商
-        
-        Args:
-            name: 提供商名称
-            provider_class: 提供商类
-        """
-        cls._providers[name] = provider_class
-    
-    @classmethod
-    def create_provider(cls, name: str, config: Dict[str, Any]) -> BaseRAGProvider:
-        """创建提供商实例
-        
-        Args:
-            name: 提供商名称
-            config: 配置字典
-            
-        Returns:
-            BaseRAGProvider: 提供商实例
-            
-        Raises:
-            ValueError: 提供商不存在或配置无效
-        """
-        if name not in cls._providers:
-            raise ValueError(f"Unknown provider: {name}")
-        
-        provider_class = cls._providers[name]
-        return provider_class(config)
-    
-    @classmethod
-    def list_providers(cls) -> list[str]:
-        """列出所有可用的提供商
-        
-        Returns:
-            list[str]: 提供商名称列表
-        """
-        return list(cls._providers.keys())
+    @property
+    def provider_type(self) -> str:
+        """提供商类型"""
+        return "Search"
