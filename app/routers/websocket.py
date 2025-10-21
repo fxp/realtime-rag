@@ -222,9 +222,14 @@ async def process_question(websocket: WebSocket, session: SessionState,
                         "analyzing", f"分析问题: {question[:50]}...", 
                         question=question)
         
+        # 发送查询状态，如果是即时查询则包含mode字段
+        status_kwargs = {"question": question}
+        if instant:
+            status_kwargs["mode"] = "instant"
+        
         await send_status(websocket, session.session_id, 
                         "querying_rag", "正在查询RAG服务",
-                        question=question)
+                        **status_kwargs)
         
         # 查询RAG服务
         result = await rag_service.query(question)

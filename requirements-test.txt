@@ -1,0 +1,21 @@
+# 测试依赖
+
+# WebSocket 客户端
+websockets==12.0
+
+# 彩色输出
+colorama==0.4.6
+
+# 异步测试
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+# 代码覆盖
+pytest-cov==4.1.0
+
+# 开发工具（可选）
+# black==23.12.1
+# flake8==6.1.0
+# mypy==1.7.1
+
+
