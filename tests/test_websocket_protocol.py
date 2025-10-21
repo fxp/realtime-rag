@@ -10,6 +10,8 @@ import asyncio
 import json
 import sys
 import time
+import argparse
+import os
 from typing import List, Dict, Any, Optional
 import websockets
 from dataclasses import dataclass, field
@@ -19,9 +21,38 @@ from colorama import init, Fore, Style
 # 初始化颜色输出
 init(autoreset=True)
 
-# 配置
-WS_URL = "ws://localhost:8000/ws/realtime-asr"
-TIMEOUT = 30
+# 默认配置
+DEFAULT_HOST = "localhost"
+DEFAULT_PORT = 8000
+DEFAULT_TIMEOUT = 30
+
+# 从环境变量或命令行参数获取配置
+def get_config():
+    """获取测试配置"""
+    parser = argparse.ArgumentParser(description="WebSocket 协议测试脚本")
+    parser.add_argument("--host", default=os.getenv("TEST_HOST", DEFAULT_HOST),
+                       help=f"测试服务器主机地址 (默认: {DEFAULT_HOST})")
+    parser.add_argument("--port", type=int, default=int(os.getenv("TEST_PORT", DEFAULT_PORT)),
+                       help=f"测试服务器端口 (默认: {DEFAULT_PORT})")
+    parser.add_argument("--timeout", type=int, default=int(os.getenv("TEST_TIMEOUT", DEFAULT_TIMEOUT)),
+                       help=f"测试超时时间（秒）(默认: {DEFAULT_TIMEOUT})")
+    parser.add_argument("--path", default="/ws/realtime-asr",
+                       help="WebSocket 路径 (默认: /ws/realtime-asr)")
+    
+    args = parser.parse_args()
+    
+    return {
+        "host": args.host,
+        "port": args.port,
+        "timeout": args.timeout,
+        "path": args.path,
+        "ws_url": f"ws://{args.host}:{args.port}{args.path}"
+    }
+
+# 获取配置
+config = get_config()
+WS_URL = config["ws_url"]
+TIMEOUT = config["timeout"]
 
 # 协议定义的状态
 VALID_STAGES = {
@@ -828,6 +859,9 @@ async def main():
     print("="*60)
     print(f"{Style.RESET_ALL}")
     print(f"测试服务器: {WS_URL}")
+    print(f"主机地址: {config['host']}")
+    print(f"端口: {config['port']}")
+    print(f"路径: {config['path']}")
     print(f"超时设置: {TIMEOUT}秒")
     print()
     
