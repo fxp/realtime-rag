@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时问答系统 - Realtime RAG</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 
+                         'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 15px;
+            padding: 25px 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .header h1 {
+            color: #667eea;
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-badge::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-connected::before {
+            background: #28a745;
+        }
+
+        .status-disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-disconnected::before {
+            background: #dc3545;
+        }
+
+        .status-connecting {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-connecting::before {
+            background: #ffc107;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 20px;
+        }
+
+        @media (max-width: 968px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .chat-area {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 180px);
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .panel {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .panel h3 {
+            font-size: 16px;
+            color: #667eea;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            padding-right: 10px;
+        }
+
+        .messages::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        .messages::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 3px;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message-header {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .message-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+
+        .user-icon {
+            background: #667eea;
+            color: white;
+        }
+
+        .bot-icon {
+            background: #764ba2;
+            color: white;
+        }
+
+        .system-icon {
+            background: #ffc107;
+            color: white;
+        }
+
+        .message-content {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            line-height: 1.6;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .message.bot .message-content {
+            background: #f8f9fa;
+            border-left: 3px solid #667eea;
+        }
+
+        .message.system .message-content {
+            background: #fff3cd;
+            border-left: 3px solid #ffc107;
+            font-size: 14px;
+        }
+
+        .input-area {
+            display: flex;
+            gap: 10px;
+        }
+
+        .input-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        #questionInput {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e1e8ed;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: all 0.3s;
+            resize: none;
+            font-family: inherit;
+        }
+
+        #questionInput:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            padding: 15px 25px;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-warning {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-small {
+            padding: 8px 15px;
+            font-size: 13px;
+            width: 100%;
+        }
+
+        .control-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .stage-indicator {
+            padding: 12px 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 14px;
+            text-align: center;
+            border-left: 3px solid #667eea;
+        }
+
+        .stage-name {
+            font-weight: 600;
+            color: #667eea;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .stage-desc {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .session-info {
+            font-size: 12px;
+            color: #666;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            word-break: break-all;
+        }
+
+        .typing-indicator {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .typing-indicator.active {
+            display: flex;
+        }
+
+        .typing-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            background: #667eea;
+            border-radius: 50%;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% {
+                transform: translateY(0);
+            }
+            30% {
+                transform: translateY(-10px);
+            }
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .empty-state-text {
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🤖 实时问答系统</h1>
+            <div id="connectionStatus" class="status-badge status-disconnected">
+                未连接
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Chat Area -->
+            <div class="chat-area">
+                <div class="messages" id="messages">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">💬</div>
+                        <div class="empty-state-text">开始提问，获取实时答案</div>
+                    </div>
+                </div>
+
+                <div class="typing-indicator" id="typingIndicator">
+                    <div class="typing-dots">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                    <span>正在思考...</span>
+                </div>
+
+                <div class="input-area">
+                    <div class="input-wrapper">
+                        <textarea 
+                            id="questionInput" 
+                            placeholder="在这里输入你的问题..." 
+                            rows="2"
+                        ></textarea>
+                    </div>
+                    <button id="sendBtn" class="btn btn-primary" disabled>
+                        发送 📤
+                    </button>
+                </div>
+            </div>
+
+            <!-- Sidebar -->
+            <div class="sidebar">
+                <!-- System Status -->
+                <div class="panel">
+                    <h3>系统状态</h3>
+                    <div id="stageIndicator" class="stage-indicator">
+                        <span class="stage-name">未连接</span>
+                        <span class="stage-desc">等待连接到服务器</span>
+                    </div>
+                </div>
+
+                <!-- Control Panel -->
+                <div class="panel">
+                    <h3>控制面板</h3>
+                    <div class="control-buttons">
+                        <button id="pauseBtn" class="btn btn-warning btn-small" disabled>
+                            ⏸️ 暂停
+                        </button>
+                        <button id="resumeBtn" class="btn btn-success btn-small" disabled>
+                            ▶️ 恢复
+                        </button>
+                        <button id="stopBtn" class="btn btn-danger btn-small" disabled>
+                            ⏹️ 停止
+                        </button>
+                        <button id="instantQueryBtn" class="btn btn-primary btn-small" disabled>
+                            ⚡ 即时查询
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Statistics -->
+                <div class="panel">
+                    <h3>统计信息</h3>
+                    <div class="stats">
+                        <div class="stat-item">
+                            <div class="stat-value" id="questionCount">0</div>
+                            <div class="stat-label">问题数</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="answerCount">0</div>
+                            <div class="stat-label">回答数</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Session Info -->
+                <div class="panel">
+                    <h3>会话信息</h3>
+                    <div id="sessionInfo" class="session-info">
+                        会话ID: 未连接
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // WebSocket连接配置
+        const WS_URL = `ws://${window.location.hostname}:8000/ws/realtime-asr`;
+        
+        // 全局状态
+        let ws = null;
+        let sessionId = null;
+        let questionCount = 0;
+        let answerCount = 0;
+        let currentAnswerElement = null;
+        let currentStreamIndex = -1;
+
+        // 状态映射
+        const stageDescriptions = {
+            'listening': '正在监听',
+            'paused': '已暂停',
+            'waiting_for_question': '等待问题',
+            'analyzing': '正在分析',
+            'instant_query': '即时查询',
+            'querying_rag': '正在查询',
+            'interrupting': '中断处理',
+            'idle': '空闲',
+            'closed': '已关闭'
+        };
+
+        // DOM元素
+        const elements = {
+            connectionStatus: document.getElementById('connectionStatus'),
+            messages: document.getElementById('messages'),
+            questionInput: document.getElementById('questionInput'),
+            sendBtn: document.getElementById('sendBtn'),
+            typingIndicator: document.getElementById('typingIndicator'),
+            stageIndicator: document.getElementById('stageIndicator'),
+            sessionInfo: document.getElementById('sessionInfo'),
+            questionCountEl: document.getElementById('questionCount'),
+            answerCountEl: document.getElementById('answerCount'),
+            pauseBtn: document.getElementById('pauseBtn'),
+            resumeBtn: document.getElementById('resumeBtn'),
+            stopBtn: document.getElementById('stopBtn'),
+            instantQueryBtn: document.getElementById('instantQueryBtn')
+        };
+
+        // 初始化连接
+        function connect() {
+            updateConnectionStatus('connecting', '正在连接...');
+            
+            try {
+                ws = new WebSocket(WS_URL);
+                
+                ws.onopen = handleOpen;
+                ws.onmessage = handleMessage;
+                ws.onerror = handleError;
+                ws.onclose = handleClose;
+            } catch (error) {
+                console.error('WebSocket连接失败:', error);
+                updateConnectionStatus('disconnected', '连接失败');
+            }
+        }
+
+        // WebSocket事件处理
+        function handleOpen(event) {
+            console.log('WebSocket已连接');
+            updateConnectionStatus('connected', '已连接');
+        }
+
+        function handleMessage(event) {
+            try {
+                const message = JSON.parse(event.data);
+                console.log('收到消息:', message);
+                
+                switch(message.type) {
+                    case 'ack':
+                        handleAck(message);
+                        break;
+                    case 'status':
+                        handleStatus(message);
+                        break;
+                    case 'answer':
+                        handleAnswer(message);
+                        break;
+                    case 'error':
+                        handleErrorMessage(message);
+                        break;
+                    case 'batch_progress':
+                        handleBatchProgress(message);
+                        break;
+                }
+            } catch (error) {
+                console.error('消息处理错误:', error);
+            }
+        }
+
+        function handleError(event) {
+            console.error('WebSocket错误:', event);
+            addSystemMessage('连接错误，请检查服务器状态');
+        }
+
+        function handleClose(event) {
+            console.log('WebSocket已断开');
+            updateConnectionStatus('disconnected', '连接已断开');
+            disableControls();
+            addSystemMessage('连接已断开');
+        }
+
+        // 消息处理函数
+        function handleAck(message) {
+            if (message.session_id) {
+                sessionId = message.session_id;
+                updateSessionInfo();
+            }
+            
+            if (message.message) {
+                addSystemMessage(message.message);
+            }
+        }
+
+        function handleStatus(message) {
+            const stage = message.stage;
+            const description = stageDescriptions[stage] || stage;
+            
+            updateStage(stage, description);
+            
+            // 根据状态更新控制按钮
+            updateControlButtons(stage);
+            
+            // 显示状态变化消息
+            let statusText = `系统状态: ${description}`;
+            if (message.question) {
+                statusText += ` - 问题: ${message.question}`;
+            }
+            if (message.note) {
+                statusText += ` - ${message.note}`;
+            }
+            
+            addSystemMessage(statusText);
+            
+            // 处理typing indicator
+            if (stage === 'analyzing' || stage === 'querying_rag') {
+                showTypingIndicator();
+            } else if (stage === 'idle' || stage === 'waiting_for_question') {
+                hideTypingIndicator();
+            }
+        }
+
+        function handleAnswer(message) {
+            const { stream_index, content, final } = message;
+            
+            // 新的答案流
+            if (stream_index !== currentStreamIndex) {
+                currentStreamIndex = stream_index;
+                currentAnswerElement = addBotMessage('');
+                answerCount++;
+                updateStats();
+            }
+            
+            // 追加内容
+            if (currentAnswerElement && content) {
+                const contentDiv = currentAnswerElement.querySelector('.message-content');
+                contentDiv.textContent += content;
+                scrollToBottom();
+            }
+            
+            // 答案完成
+            if (final) {
+                hideTypingIndicator();
+                currentAnswerElement = null;
+                currentStreamIndex = -1;
+            }
+        }
+
+        function handleErrorMessage(message) {
+            const errorText = `错误 [${message.code}]: ${message.message}`;
+            addSystemMessage(errorText);
+            hideTypingIndicator();
+        }
+
+        function handleBatchProgress(message) {
+            const progressText = `批量处理进度: ${message.progress.toFixed(1)}% - ${message.message}`;
+            addSystemMessage(progressText);
+        }
+
+        // UI更新函数
+        function updateConnectionStatus(status, text) {
+            elements.connectionStatus.className = `status-badge status-${status}`;
+            elements.connectionStatus.textContent = text;
+            
+            if (status === 'connected') {
+                elements.sendBtn.disabled = false;
+                enableControls();
+            } else {
+                elements.sendBtn.disabled = true;
+                disableControls();
+            }
+        }
+
+        function updateStage(stage, description) {
+            elements.stageIndicator.innerHTML = `
+                <span class="stage-name">${description}</span>
+                <span class="stage-desc">${stage}</span>
+            `;
+        }
+
+        function updateSessionInfo() {
+            elements.sessionInfo.textContent = `会话ID: ${sessionId || '未知'}`;
+        }
+
+        function updateStats() {
+            elements.questionCountEl.textContent = questionCount;
+            elements.answerCountEl.textContent = answerCount;
+        }
+
+        function updateControlButtons(stage) {
+            // 根据当前状态启用/禁用控制按钮
+            const isListening = stage === 'listening';
+            const isPaused = stage === 'paused';
+            const isQuerying = stage === 'querying_rag' || stage === 'analyzing';
+            
+            elements.pauseBtn.disabled = !isListening;
+            elements.resumeBtn.disabled = !isPaused;
+            elements.stopBtn.disabled = stage === 'idle' || stage === 'closed';
+        }
+
+        function enableControls() {
+            elements.pauseBtn.disabled = false;
+            elements.stopBtn.disabled = false;
+            elements.instantQueryBtn.disabled = false;
+        }
+
+        function disableControls() {
+            elements.pauseBtn.disabled = true;
+            elements.resumeBtn.disabled = true;
+            elements.stopBtn.disabled = true;
+            elements.instantQueryBtn.disabled = true;
+        }
+
+        // 消息显示函数
+        function addMessage(type, content, icon) {
+            // 清除空状态
+            const emptyState = elements.messages.querySelector('.empty-state');
+            if (emptyState) {
+                emptyState.remove();
+            }
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString('zh-CN');
+            
+            messageDiv.innerHTML = `
+                <div class="message-header">
+                    <div class="message-icon ${type}-icon">${icon}</div>
+                    <span>${timestamp}</span>
+                </div>
+                <div class="message-content">${content}</div>
+            `;
+            
+            elements.messages.appendChild(messageDiv);
+            scrollToBottom();
+            
+            return messageDiv;
+        }
+
+        function addUserMessage(text) {
+            return addMessage('user', text, '👤');
+        }
+
+        function addBotMessage(text) {
+            return addMessage('bot', text, '🤖');
+        }
+
+        function addSystemMessage(text) {
+            return addMessage('system', text, 'ℹ️');
+        }
+
+        function showTypingIndicator() {
+            elements.typingIndicator.classList.add('active');
+        }
+
+        function hideTypingIndicator() {
+            elements.typingIndicator.classList.remove('active');
+        }
+
+        function scrollToBottom() {
+            elements.messages.scrollTop = elements.messages.scrollHeight;
+        }
+
+        // 发送消息函数
+        function sendMessage(message) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(message));
+                console.log('发送消息:', message);
+            } else {
+                addSystemMessage('未连接到服务器');
+            }
+        }
+
+        function sendQuestion() {
+            const text = elements.questionInput.value.trim();
+            
+            if (!text) {
+                return;
+            }
+            
+            // 显示用户消息
+            addUserMessage(text);
+            
+            // 发送ASR chunk
+            sendMessage({
+                type: 'asr_chunk',
+                text: text,
+                is_final: true
+            });
+            
+            // 清空输入框
+            elements.questionInput.value = '';
+            questionCount++;
+            updateStats();
+        }
+
+        // 控制函数
+        function sendControl(action) {
+            sendMessage({
+                type: 'control',
+                action: action
+            });
+        }
+
+        // 事件监听
+        elements.sendBtn.addEventListener('click', sendQuestion);
+
+        elements.questionInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendQuestion();
+            }
+        });
+
+        elements.pauseBtn.addEventListener('click', () => sendControl('pause'));
+        elements.resumeBtn.addEventListener('click', () => sendControl('resume'));
+        elements.stopBtn.addEventListener('click', () => sendControl('stop'));
+        elements.instantQueryBtn.addEventListener('click', () => sendControl('instant_query'));
+
+        // 页面加载时自动连接
+        window.addEventListener('load', () => {
+            connect();
+        });
+
+        // 页面卸载时断开连接
+        window.addEventListener('beforeunload', () => {
+            if (ws) {
+                ws.close();
+            }
+        });
+    </script>
+</body>
+</html>

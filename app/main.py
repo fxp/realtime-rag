@@ -2,9 +2,12 @@
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 import logging
 from typing import Dict, Any
+import os
 
 from app.config import config
 from app.services.rag_service import RAGService
@@ -92,10 +95,18 @@ app.add_middleware(
 # 注册批量处理路由
 app.include_router(batch_router.router)
 
+# 挂载静态文件
+static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
 
 @app.get("/")
 async def root():
-    """根路径"""
+    """根路径 - 返回测试网页"""
+    static_index = os.path.join(static_dir, "index.html")
+    if os.path.exists(static_index):
+        return FileResponse(static_index)
     return {
         "name": config.app_name,
         "version": config.app_version,
